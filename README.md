@@ -2,6 +2,12 @@
 
 Restores classic Death Knight rune textures with configurable style, cooldown-number, cooldown-spiral, recovery-order, and Personal Resource Display options.
 
+## Preview
+
+![Old Runes artwork in game](https://media.forgecdn.net/attachments/1566/212/screenshot-2026-03-05-094329-png.png)
+
+Screenshot from the [CurseForge gallery](https://www.curseforge.com/wow/addons/old-runes).
+
 ## Installation
 
 Copy the `OldRunes` directory into `World of Warcraft/_retail_/Interface/AddOns/`, then restart the client or use `/reload`.
@@ -29,3 +35,7 @@ The current open work is in-game validation on a Death Knight: Personal Resource
 - [Architecture](ARCHITECTURE.md)
 - [Code index](CODE_INDEX.md)
 - [Code graph](CODE_GRAPH.md)
+
+## License
+
+Licensed under the [MIT License](LICENSE). Bundled third-party components remain under their own notices.
