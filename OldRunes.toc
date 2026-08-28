@@ -1,9 +1,9 @@
-## Interface: 120007
+## Interface: 120100
 ## Title: |cC41F3BFFOld Runes|r
 ## Notes: Restores classic Death Knight rune textures with customizable options
 ## Notes-ruRU: Возвращает классические текстуры рун рыцаря смерти с настраиваемыми опциями
 ## Author: Dakini, Neomorph
-## Version: 2.0.1
+## Version: 2.1.0
 ## SavedVariables: OldRunesDB
 ## Category: Class
 ## X-Category: Class
