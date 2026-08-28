@@ -1,0 +1,242 @@
+name: Release addon
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - OldRunes.toc
+      - Localization.lua
+      - Core.lua
+      - Options.lua
+      - .github/workflows/release.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Validate, package, and publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Read and validate TOC metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(sed -n 's/^## Version:[[:space:]]*//p' OldRunes.toc | head -n 1 | tr -d '\r')"
+          interface="$(sed -n 's/^## Interface:[[:space:]]*//p' OldRunes.toc | head -n 1 | tr -d '\r')"
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid or missing TOC version: $version" >&2
+            exit 1
+          fi
+
+          if [[ "$interface" != "120100" ]]; then
+            echo "Release requires Interface 120100; found: $interface" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "interface=$interface" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "archive=OldRunes-$version.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Install Lua 5.1 compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.1
+
+      - name: Validate runtime source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          luac5.1 -p Localization.lua Core.lua Options.lua
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          expected_runtime = [
+              "Localization.lua",
+              "Core.lua",
+              "Options.lua",
+          ]
+
+          toc = Path("OldRunes.toc")
+          runtime = [
+              line.strip()
+              for line in toc.read_text(encoding="utf-8").splitlines()
+              if line.strip() and not line.lstrip().startswith("##")
+          ]
+          if runtime != expected_runtime:
+              raise SystemExit(
+                  f"Unexpected TOC runtime closure: {runtime!r}; expected {expected_runtime!r}"
+              )
+
+          for name in ["OldRunes.toc", *expected_runtime]:
+              path = Path(name)
+              if not path.is_file():
+                  raise SystemExit(f"Missing runtime file: {name}")
+              data = path.read_bytes()
+              if data.startswith(b"\xef\xbb\xbf"):
+                  raise SystemExit(f"UTF-8 BOM is not allowed: {name}")
+          PY
+
+          forbidden='layoutIndex[[:space:]]*=|:Layout\(|UpdateRunes[[:space:]]*\([[:space:]]*false|GetChildren|GetNumChildren|DeathKnightResourceOverlayFrame|prdClassFrame'
+          if grep -nE "$forbidden" Core.lua; then
+            echo "Forbidden layout/discovery pattern found in Core.lua" >&2
+            exit 1
+          fi
+
+          grep -Fq 'AddFrame(RuneFrame)' Core.lua
+          grep -Fq 'AddFrame(prdFrame.classFrame)' Core.lua
+          grep -Fq 'hooksecurefunc(frame, "UpdateRunes"' Core.lua
+          grep -Fq 'PLAYER_REGEN_ENABLED' Core.lua
+
+      - name: Build minimal addon archive
+        id: package
+        env:
+          ARCHIVE: ${{ steps.metadata.outputs.archive }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          archive = Path(os.environ["ARCHIVE"])
+          files = [
+              Path("OldRunes.toc"),
+              Path("Localization.lua"),
+              Path("Core.lua"),
+              Path("Options.lua"),
+          ]
+          expected = [f"OldRunes/{path.name}" for path in files]
+
+          with ZipFile(archive, "w", compression=ZIP_DEFLATED, compresslevel=9) as package:
+              for path in files:
+                  package.write(path, f"OldRunes/{path.name}")
+
+          with ZipFile(archive, "r") as package:
+              names = package.namelist()
+              if names != expected:
+                  raise SystemExit(
+                      f"Unexpected archive contents: {names!r}; expected {expected!r}"
+                  )
+              bad = [
+                  name for name in names
+                  if any(token in name.lower() for token in (
+                      "agent", "architecture", "todo", "readme", "changelog",
+                      "code_index", "code_graph", "test", ".github",
+                  ))
+              ]
+              if bad:
+                  raise SystemExit(f"Non-runtime files leaked into archive: {bad!r}")
+
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          Path("archive.sha256").write_text(digest + "\n", encoding="ascii")
+          print(f"Created {archive} ({archive.stat().st_size} bytes)")
+          print(f"SHA-256: {digest}")
+          PY
+
+          digest="$(cat archive.sha256)"
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Package"
+            echo
+            echo "- Archive: \`$ARCHIVE\`"
+            echo "- Root: \`OldRunes/\`"
+            echo "- Files: \`OldRunes.toc\`, \`Localization.lua\`, \`Core.lua\`, \`Options.lua\`"
+            echo "- SHA-256: \`$digest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify tag target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null)"; then
+            if [[ "$tag_sha" != "$GITHUB_SHA" ]]; then
+              echo "$TAG already points to $tag_sha, not $GITHUB_SHA. Bump ## Version before releasing new code." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+          INTERFACE: ${{ steps.metadata.outputs.interface }}
+          ARCHIVE: ${{ steps.metadata.outputs.archive }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          ## Old Runes $VERSION
+
+          Updated for World of Warcraft Retail 12.1.0 (Interface \`$INTERFACE\`).
+
+          ### Changes
+
+          - Keeps the selected rune style after specialization and world lifecycle changes.
+          - Uses the source-confirmed player \`RuneFrame\` and \`PersonalResourceDisplayFrame.classFrame\` paths.
+          - Restores Blizzard rune art and cooldown defaults when Personal Resource Display styling is disabled.
+          - Defers addon-owned overlay creation and atlas visibility reconciliation until combat ends.
+          - Fixes legacy \`multicolorRunes\` SavedVariables migration.
+
+          ### Package
+
+          \`$ARCHIVE\` contains only the installable \`OldRunes/\` directory with:
+
+          - \`OldRunes.toc\`
+          - \`Localization.lua\`
+          - \`Core.lua\`
+          - \`Options.lua\`
+
+          SHA-256: \`$SHA256\`
+
+          Static release checks and Lua 5.1 syntax validation passed. Live-client validation remains tracked in issues #1 and #2.
+          EOF
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          ARCHIVE: ${{ steps.metadata.outputs.archive }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ARCHIVE" --clobber
+            gh release edit "$TAG" \
+              --title "Old Runes $VERSION" \
+              --notes-file release-notes.md \
+              --latest
+          else
+            gh release create "$TAG" "$ARCHIVE" \
+              --target "$GITHUB_SHA" \
+              --title "Old Runes $VERSION" \
+              --notes-file release-notes.md \
+              --latest
+          fi
