@@ -7,134 +7,134 @@
 ## Task: 12.0.7 Personal Resource Display class frame discovery (2026-06-18)
 
 ### Root-cause hypothesis
-- В 12.0.7 `PersonalResourceDisplayMixin:SetupClassBar()` создаёт DK rune frame как `self.classFrame = FrameUtil.CreateFrame(nil, self.ClassFrameContainer, "RuneFrameTemplate")`.
-- Старый OldRunes искал `prdClassFrame`/`DeathKnightResourceOverlayFrame`, но новый PRD class frame без глобального имени не попадал в `GetRuneFrameCandidates()`.
-- Поэтому `RuneFrame` на фрейме персонажа продолжал работать, а отдельно включаемый Personal Resource Display не получал overlay/hook path.
+- In 12.0.7, `PersonalResourceDisplayMixin:SetupClassBar()` creates the Death Knight rune frame as `self.classFrame = FrameUtil.CreateFrame(nil, self.ClassFrameContainer, "RuneFrameTemplate")`.
+- The previous Old Runes implementation searched for `prdClassFrame` / `DeathKnightResourceOverlayFrame`, but the new PRD class frame has no global name and therefore was not discovered by `GetRuneFrameCandidates()`.
+- As a result, the normal player-frame `RuneFrame` continued to work, while the separately enabled Personal Resource Display did not receive the overlay/hook path.
 
 ### Plan
-1. Добавить discovery через `PersonalResourceDisplayFrame.classFrame`.
-2. Оставить fallback-скан детей `ClassFrameContainer` для nameless/future PRD frames.
-3. Дедуплицировать кандидаты, чтобы один frame не хукался/обрабатывался дважды.
-4. Обновить TOC target до `120007`.
-5. Выполнить API/source/static/lint checks.
+1. Add discovery through `PersonalResourceDisplayFrame.classFrame`.
+2. Keep a fallback scan of `ClassFrameContainer` children for nameless or future PRD frames.
+3. Deduplicate candidates so the same frame is not hooked or processed twice.
+4. Update the TOC target to `120007`.
+5. Run API, source, static, and lint checks.
 
 ### Progress
-- [x] Root cause подтверждён по `C:\Tools\WoW_Dev_Tools\wow-ui-source/Blizzard_PersonalResourceDisplay/Blizzard_PersonalResourceDisplay.lua`.
-- [x] Кодовые правки выполнены.
-- [x] TOC обновлён под 12.0.7.
-- [x] Статические проверки выполнены.
-- [ ] In-game smoke test на DK с включённым Personal Resource Display.
+- [x] Root cause confirmed against `C:\Tools\WoW_Dev_Tools\wow-ui-source/Blizzard_PersonalResourceDisplay/Blizzard_PersonalResourceDisplay.lua`.
+- [x] Code changes completed.
+- [x] TOC updated for 12.0.7.
+- [x] Static checks completed.
+- [ ] In-game smoke test on a Death Knight with Personal Resource Display enabled.
 
 ### Change History
-- 2026-06-18 1: `Core.lua` — `GetRuneFrameCandidates()` теперь добавляет `PersonalResourceDisplayFrame.classFrame`, сканирует `ClassFrameContainer` и дедуплицирует найденные rune frames.
-- 2026-06-18 2: `Core.lua` — `IsPersonalResourceFrame()` распознаёт nameless `PersonalResourceDisplayFrame.classFrame`.
-- 2026-06-18 3: `Core.lua` — PRD refresh теперь пост-хукает `SetupClassBar` и `SetHideClassInfo`.
-- 2026-06-18 4: `OldRunes.toc` — `## Interface` поднят до `120007`, версия до `2.0.1`.
+- 2026-06-18 1: `Core.lua` — `GetRuneFrameCandidates()` now adds `PersonalResourceDisplayFrame.classFrame`, scans `ClassFrameContainer`, and deduplicates discovered rune frames.
+- 2026-06-18 2: `Core.lua` — `IsPersonalResourceFrame()` now recognizes the nameless `PersonalResourceDisplayFrame.classFrame`.
+- 2026-06-18 3: `Core.lua` — PRD refresh now post-hooks `SetupClassBar` and `SetHideClassInfo`.
+- 2026-06-18 4: `OldRunes.toc` — raised `## Interface` to `120007` and version to `2.0.1`.
 
 ### Test Log
-- 2026-06-18 1: Проверен Blizzard source: DK PRD использует `RuneFrameTemplate` через `FrameUtil.CreateFrame(nil, self.ClassFrameContainer, classFrameInfo.template)`.
-- 2026-06-18 2: Проверен `wow-api`: `GetRuneCooldown`, `C_SpecializationInfo.GetSpecialization`, `UnitClass`, `hooksecurefunc`, `C_Timer.After`; Frame widget methods include `GetChildren`/`GetNumChildren`.
+- 2026-06-18 1: Verified Blizzard source: DK PRD uses `RuneFrameTemplate` through `FrameUtil.CreateFrame(nil, self.ClassFrameContainer, classFrameInfo.template)`.
+- 2026-06-18 2: Verified `wow-api`: `GetRuneCooldown`, `C_SpecializationInfo.GetSpecialization`, `UnitClass`, `hooksecurefunc`, `C_Timer.After`; Frame widget methods include `GetChildren` / `GetNumChildren`.
 - 2026-06-18 3: `git diff --check -- _Addons/OldRunes` -> clean.
 - 2026-06-18 4: `lua-language-server.exe --check=WoWDevAddons --checklevel=Error` -> `Diagnosis completed, no problems found`.
-- 2026-06-18 5: Статический grep `layoutIndex\s*=|:Layout\(|UpdateRunes\(false\)` по `OldRunes/*.lua` -> совпадений нет.
+- 2026-06-18 5: Static grep for `layoutIndex\s*=|:Layout\(|UpdateRunes\(false\)` across `OldRunes/*.lua` -> no matches.
 
 ---
 
 ## Task: Add Specless Rune Style (2026-03-05)
 
 ### Root-cause hypothesis
-- Текущие стили (`SPEC/MIXED/DEATH`) работают через скрытие Blizzard atlas-слоев и наложение нашей текстуры (`overlay`).
-- `specless`-руны Blizzard (серые, `Default`) находятся в atlas-пайплайне `RuneButtonMixin:UpdateSpec(nil)`, поэтому overlay-механизм для этого стиля не подходит.
+- The current styles (`SPEC/MIXED/DEATH`) work by hiding Blizzard atlas layers and applying an addon-owned texture (`overlay`).
+- Blizzard's `specless` runes (gray, `Default`) are produced by the atlas pipeline in `RuneButtonMixin:UpdateSpec(nil)`, so the overlay mechanism is not appropriate for this style.
 
 ### Plan
-1. Добавить новый стиль `SPECLESS` в Core/Options/Localization/slash.
-2. Для `SPECLESS` отключать overlay path и принудительно возвращать Blizzard `Default` atlas через `rune:UpdateSpec(nil)`.
-3. Сохранить taint-safe подход: без layout mutation (`layoutIndex`/`frame:Layout()`).
-4. Выполнить статические проверки и обновить историю.
+1. Add a new `SPECLESS` style to Core, Options, Localization, and slash commands.
+2. For `SPECLESS`, disable the overlay path and explicitly restore Blizzard's `Default` atlas through `rune:UpdateSpec(nil)`.
+3. Preserve the taint-safe approach: no layout mutation (`layoutIndex` / `frame:Layout()`).
+4. Run static checks and update the history.
 
 ### Progress
-- [x] Root cause подтвержден по Blizzard `RuneFrame.lua` (`DefaultArtType` через `UpdateSpec(nil)`).
-- [x] Кодовые правки выполнены.
-- [x] Статическая проверка выполнена.
-- [x] Задача закрыта.
+- [x] Root cause confirmed against Blizzard `RuneFrame.lua` (`DefaultArtType` through `UpdateSpec(nil)`).
+- [x] Code changes completed.
+- [x] Static verification completed.
+- [x] Task closed.
 
 ### Change History
-- 2026-03-05 1: Открыт task на добавление `specless`-стиля на базе Blizzard atlas.
-- 2026-03-05 2: `Core.lua` — добавлен стиль `RUNE_STYLE_SPECLESS`, slash aliases (`specless|gray|grey`) и локализованное имя стиля.
-- 2026-03-05 3: `Core.lua` — добавлен `EnsureBlizzardRuneArt(...)`: для `SPECLESS` вызывается `rune:UpdateSpec(nil)`, overlay path отключается (atlas-рендер Blizzard сохраняется).
-- 2026-03-05 4: `Options.lua` — добавлен новый чекбокс стиля `Specless (Blizzard gray atlas)`.
-- 2026-03-05 5: `Localization.lua` — добавлены ключи `CMD_DESC_STYLE_SPECLESS`, `STYLE_NAME_SPECLESS`, `OPT_STYLE_SPECLESS_*`; обновлен `MSG_STYLE_USAGE`.
+- 2026-03-05 1: Opened the task to add a `specless` style based on the Blizzard atlas.
+- 2026-03-05 2: `Core.lua` — added `RUNE_STYLE_SPECLESS`, slash aliases (`specless|gray|grey`), and the localized style name.
+- 2026-03-05 3: `Core.lua` — added `EnsureBlizzardRuneArt(...)`: for `SPECLESS`, it calls `rune:UpdateSpec(nil)` and disables the overlay path, preserving Blizzard atlas rendering.
+- 2026-03-05 4: `Options.lua` — added the `Specless (Blizzard gray atlas)` style checkbox.
+- 2026-03-05 5: `Localization.lua` — added `CMD_DESC_STYLE_SPECLESS`, `STYLE_NAME_SPECLESS`, and `OPT_STYLE_SPECLESS_*`; updated `MSG_STYLE_USAGE`.
 
 ### Test Log
-- 2026-03-05 1: Подтверждено в `Blizzard_UnitFrame/Mainline/RuneFrame.lua`: если `specIndex == nil`, `RuneButtonMixin:UpdateSpec` использует `DefaultArtType` (серые specless-руны).
-- 2026-03-05 2: Проверен `wow-api`: `GetRuneCooldown`, `C_SpecializationInfo.GetSpecialization` — сигнатуры валидны для Mainline.
-- 2026-03-05 3: Статический grep `rg -n "RUNE_STYLE_SPECLESS|style specless|CMD_DESC_STYLE_SPECLESS|OPT_STYLE_SPECLESS" _Addons/OldRunes -g "*.lua"` -> стиль добавлен в Core/Options/Localization.
-- 2026-03-05 4: Статический grep `rg -n "EnsureBlizzardRuneArt|UpdateSpec\(nil\)|GetTextureForRune\(" _Addons/OldRunes/Core.lua` -> `SPECLESS` использует Blizzard atlas path через `UpdateSpec(nil)`.
-- 2026-03-05 5: Статический grep `rg -n "layoutIndex\s*=|:Layout\(|UpdateRunes\(false\)" _Addons/OldRunes -g "*.lua"` -> совпадений нет (taint-опасные мутации не возвращены).
+- 2026-03-05 1: Confirmed in `Blizzard_UnitFrame/Mainline/RuneFrame.lua`: when `specIndex == nil`, `RuneButtonMixin:UpdateSpec` uses `DefaultArtType` (gray specless runes).
+- 2026-03-05 2: Verified `wow-api`: `GetRuneCooldown`, `C_SpecializationInfo.GetSpecialization` — signatures are valid for Mainline.
+- 2026-03-05 3: Static grep `rg -n "RUNE_STYLE_SPECLESS|style specless|CMD_DESC_STYLE_SPECLESS|OPT_STYLE_SPECLESS" _Addons/OldRunes -g "*.lua"` -> the style is present in Core, Options, and Localization.
+- 2026-03-05 4: Static grep `rg -n "EnsureBlizzardRuneArt|UpdateSpec\(nil\)|GetTextureForRune\(" _Addons/OldRunes/Core.lua` -> `SPECLESS` uses the Blizzard atlas path through `UpdateSpec(nil)`.
+- 2026-03-05 5: Static grep `rg -n "layoutIndex\s*=|:Layout\(|UpdateRunes\(false\)" _Addons/OldRunes -g "*.lua"` -> no matches; taint-prone mutations were not restored.
 
 ---
 
 ## Task: Mixed rune order fix without reverse (2026-03-05)
 
 ### Root-cause hypothesis
-- `Core.lua` в mixed-режиме выбирает цвет по индексу массива `Runes[i]`.
-- В Blizzard `RuneFrameTemplate` слоты уже инвертированы через `layoutIndex` (`Rune1=6 ... Rune6=1`), поэтому визуальный порядок получается обратным.
-- После отключения taint-опасного reverse это проявилось как `Unholy -> Frost -> Blood` слева направо.
+- In mixed mode, `Core.lua` selects the color using the `Runes[i]` array index.
+- In Blizzard's `RuneFrameTemplate`, the slots are already reversed through `layoutIndex` (`Rune1=6 ... Rune6=1`), so the visual order becomes reversed.
+- After the taint-prone reverse path was disabled, this appeared as `Unholy -> Frost -> Blood` from left to right.
 
 ### Plan
-1. Перевести mixed-раскраску на `rune.layoutIndex` (визуальный слот), а не на индекс массива.
-2. Сохранить taint-safe режим: не возвращать мутацию `layoutIndex` и `frame:Layout()`.
-3. Выполнить статическую проверку и зафиксировать результат.
+1. Base mixed coloring on `rune.layoutIndex` (the visual slot), not the array index.
+2. Preserve the taint-safe mode: do not restore `layoutIndex` mutation or `frame:Layout()`.
+3. Run static verification and record the result.
 
 ### Progress
-- [x] Root cause подтвержден по `RuneFrame.xml`.
-- [x] Кодовые правки выполнены.
-- [x] Статическая проверка выполнена.
-- [x] Задача закрыта.
+- [x] Root cause confirmed against `RuneFrame.xml`.
+- [x] Code changes completed.
+- [x] Static verification completed.
+- [x] Task closed.
 
 ### Change History
-- 2026-03-05 1: Открыт новый task на исправление mixed-порядка без включения reverse.
-- 2026-03-05 2: `Core.lua` — mixed-логика переведена с индекса массива `Runes[i]` на `rune.layoutIndex` (fallback на индекс массива, если layoutIndex недоступен).
+- 2026-03-05 1: Opened a task to correct mixed ordering without re-enabling reverse.
+- 2026-03-05 2: `Core.lua` — changed mixed logic from the `Runes[i]` array index to `rune.layoutIndex`, with a fallback to the array index when `layoutIndex` is unavailable.
 
 ### Test Log
-- 2026-03-05 1: Проверен Blizzard source `Blizzard_UnitFrame/Mainline/RuneFrame.xml` — `layoutIndex` для рун задан в обратном порядке (`6..1`).
-- 2026-03-05 2: Проверен `wow-api`: `GetRuneCooldown`, `C_SpecializationInfo.GetSpecialization`, `UnitClass` — сигнатуры валидны для Mainline.
-- 2026-03-05 3: Статический grep `rg -n "GetMixedTextureByLayout|layoutIndex" _Addons/OldRunes/Core.lua` -> mixed-раскраска использует `rune.layoutIndex`.
-- 2026-03-05 4: Статический grep `rg -n "layoutIndex\s*=|:Layout\(" _Addons/OldRunes -g "*.lua"` -> совпадений нет (unsafe layout mutation не возвращена).
-- 2026-03-05 5: Статический grep `rg -n "UpdateRunes\(false\)" _Addons/OldRunes -g "*.lua"` -> совпадений нет (принудительный вызов не возвращен).
+- 2026-03-05 1: Verified Blizzard source `Blizzard_UnitFrame/Mainline/RuneFrame.xml` — rune `layoutIndex` values are defined in reverse order (`6..1`).
+- 2026-03-05 2: Verified `wow-api`: `GetRuneCooldown`, `C_SpecializationInfo.GetSpecialization`, `UnitClass` — signatures are valid for Mainline.
+- 2026-03-05 3: Static grep `rg -n "GetMixedTextureByLayout|layoutIndex" _Addons/OldRunes/Core.lua` -> mixed coloring uses `rune.layoutIndex`.
+- 2026-03-05 4: Static grep `rg -n "layoutIndex\s*=|:Layout\(" _Addons/OldRunes -g "*.lua"` -> no matches; unsafe layout mutation was not restored.
+- 2026-03-05 5: Static grep `rg -n "UpdateRunes\(false\)" _Addons/OldRunes -g "*.lua"` -> no matches; the forced call was not restored.
 
 ---
 
 ## Task: Taint fix for PlayerFrameBottomManagedFramesContainer (2026-03-04)
 
 ### Root-cause hypothesis
-- `Core.lua` вручную меняет `rune.layoutIndex` и вызывает `frame:Layout()` для рун, которые наследуют `PlayerFrameBottomManagedFrameTemplate` (managed/protected path).
-- Это taint'ит цепочку layout контейнера игрока; позже secure-flow `UIParentManagedFrameMixin.OnHide -> RemoveManagedFrame -> PlayerFrameBottomManagedFramesContainer:Layout` блокируется на `SetSize()` в бою.
+- `Core.lua` manually changes `rune.layoutIndex` and calls `frame:Layout()` for runes inheriting `PlayerFrameBottomManagedFrameTemplate`, which is part of a managed/protected path.
+- This taints the player managed-container layout chain; later, the secure flow `UIParentManagedFrameMixin.OnHide -> RemoveManagedFrame -> PlayerFrameBottomManagedFramesContainer:Layout` is blocked at `SetSize()` during combat.
 
 ### Plan
-1. Удалить ручные мутации layout (`rune.layoutIndex`, `frame:Layout`) из аддона.
-2. Удалить принудительный вызов `frame:UpdateRunes(false)` из аддона.
-3. Оставить `reverseRecoveryOrder` в безопасном режиме без изменения managed layout.
-4. Выполнить статическую проверку и зафиксировать результат.
+1. Remove manual layout mutations (`rune.layoutIndex`, `frame:Layout`) from the addon.
+2. Remove the forced `frame:UpdateRunes(false)` call from the addon.
+3. Keep `reverseRecoveryOrder` in a safe mode that does not alter managed layout.
+4. Run static verification and record the result.
 
 ### Progress
-- [x] Root cause локализован по стектрейсу и коду `Core.lua`.
-- [x] Кодовые правки выполнены.
-- [x] Статическая проверка выполнена.
-- [x] Инцидент закрыт.
+- [x] Root cause localized from the stack trace and `Core.lua`.
+- [x] Code changes completed.
+- [x] Static verification completed.
+- [x] Incident closed.
 
 ### Change History
-- 2026-03-04 1: Создан план фикса taint-инцидента с подтвержденным корнем проблемы (managed layout mutation).
-- 2026-03-04 2: `Core.lua` — удалены unsafe мутации `rune.layoutIndex` и вызов `frame:Layout()` из `OldRunesUI.UpdateRecoveryOrder`.
-- 2026-03-04 3: `Core.lua` — удален принудительный вызов `frame:UpdateRunes(false)` из `ForceUpdateTrackedRuneFrames`.
-- 2026-03-04 4: Добавлен safety-комментарий по причине отключения layout mutation.
-- 2026-03-04 5: `Core.lua` — удален `PersonalResourceDisplayFrame:HookScript("OnShow")`; оставлен только `hooksecurefunc(..., "SetupClassBar", ...)` как более безопасный post-hook.
-- 2026-03-04 6: `Core.lua + Options.lua` — `reverseRecoveryOrder` переведен в явно отключенный режим (taint-safe): legacy SV принудительно в `false`, slash/UI показывают сообщение вместо фиктивного переключения.
+- 2026-03-04 1: Created a plan for the taint incident with the confirmed root cause: managed-layout mutation.
+- 2026-03-04 2: `Core.lua` — removed unsafe `rune.layoutIndex` mutations and the `frame:Layout()` call from `OldRunesUI.UpdateRecoveryOrder`.
+- 2026-03-04 3: `Core.lua` — removed the forced `frame:UpdateRunes(false)` call from `ForceUpdateTrackedRuneFrames`.
+- 2026-03-04 4: Added a safety comment explaining why layout mutation is disabled.
+- 2026-03-04 5: `Core.lua` — removed `PersonalResourceDisplayFrame:HookScript("OnShow")`; retained only `hooksecurefunc(..., "SetupClassBar", ...)` as the safer post-hook.
+- 2026-03-04 6: `Core.lua + Options.lua` — moved `reverseRecoveryOrder` into an explicitly disabled taint-safe mode: legacy SavedVariables are forced to `false`, and slash/UI paths show a message instead of pretending to toggle it.
 
 ### Test Log
-- 2026-03-04 1: Статический grep `rg -n "\:Layout\(|layoutIndex\s*=|UpdateRunes\(false\)" _Addons/OldRunes -g "*.lua"` -> совпадений нет (exit code 1 у `rg` = not found).
-- 2026-03-04 2: Статический grep `rg -n "PersonalResourceDisplayFrame:HookScript|hooksecurefunc\(PersonalResourceDisplayFrame" _Addons/OldRunes/Core.lua` -> `HookScript` отсутствует, остается только `hooksecurefunc`.
-- 2026-03-04 3: Статический grep `rg -n "reverseRecoveryOrder|MSG_REVERSE_DISABLED|/or reverse" _Addons/OldRunes -g "*.lua"` -> `reverseRecoveryOrder` больше не активирует layout path; в slash/options выводится сообщение о taint-safe отключении.
+- 2026-03-04 1: Static grep `rg -n "\:Layout\(|layoutIndex\s*=|UpdateRunes\(false\)" _Addons/OldRunes -g "*.lua"` -> no matches (`rg` exit code 1 means not found).
+- 2026-03-04 2: Static grep `rg -n "PersonalResourceDisplayFrame:HookScript|hooksecurefunc\(PersonalResourceDisplayFrame" _Addons/OldRunes/Core.lua` -> `HookScript` is absent; only `hooksecurefunc` remains.
+- 2026-03-04 3: Static grep `rg -n "reverseRecoveryOrder|MSG_REVERSE_DISABLED|/or reverse" _Addons/OldRunes -g "*.lua"` -> `reverseRecoveryOrder` no longer activates a layout path; slash/options display the taint-safe disabled message.
 
 ---
 
@@ -142,11 +142,11 @@
 
 ### ✅ Fixed in this pass
 
-- [x] **Core.lua + Options.lua** — удалён мёртвый `SETTINGS_CATEGORY_ID` (`"OldRunes"` строка). Он использовался как fallback для `Settings.OpenToCategory()`, но эта функция ожидает числовой ID — строка никогда не срабатывала.
-- [x] **Core.lua** — `/or config` упрощён: убрана цепочка fallback на строковый ID и лишний вызов `Settings.GetCategory`. Если `settingsCategoryID == nil`, сразу печатается "not registered".
-- [x] **Core.lua** — `UpdateCooldownSpiral` теперь проверяет dirty-state перед вызовом `SetSwipeColor` (аналогично остальным свойствам в этом блоке).
-- [x] **Options.lua** — удалены deprecated callbacks `panel.okay`, `panel.default`, `panel.refresh` — они не используются системой `Settings.RegisterCanvasLayoutCategory`.
-- [x] **Options.lua** — style checkboxes (Spec/Mixed/Death) теперь предотвращают uncheck: клик по уже активному стилю не мерцает, а просто сохраняет checked-состояние.
+- [x] **Core.lua + Options.lua** — removed the dead `SETTINGS_CATEGORY_ID` string (`"OldRunes"`). It was used as a fallback for `Settings.OpenToCategory()`, but that function expects a numeric ID, so the string fallback could never work.
+- [x] **Core.lua** — simplified `/or config`: removed the string-ID fallback chain and the redundant `Settings.GetCategory` call. If `settingsCategoryID == nil`, it now immediately prints `not registered`.
+- [x] **Core.lua** — `UpdateCooldownSpiral` now checks dirty state before calling `SetSwipeColor`, matching the other properties in that block.
+- [x] **Options.lua** — removed deprecated callbacks `panel.okay`, `panel.default`, and `panel.refresh`; they are not used by `Settings.RegisterCanvasLayoutCategory`.
+- [x] **Options.lua** — style checkboxes (Spec/Mixed/Death) now prevent unchecking the active style: clicking the selected style no longer flickers and simply preserves the checked state.
 
 ---
 
@@ -154,35 +154,35 @@
 
 ### ✅ Fixed in this pass
 
-- [x] **Core.lua** — non-DK early return оставлял `OldRunesUI` API неполным; при открытии настроек на не-DK могли падать вызовы `OldRunesUI.*`.
-  - **Fix**: добавлен `database-only` режим с безопасными реализациями `EnsureDBDefaults / GetRuneStyle / SetRuneStyle` и no-op для визуальных обновлений.
+- [x] **Core.lua** — the non-DK early return left the `OldRunesUI` API incomplete; opening Settings on a non-DK character could fail when calling `OldRunesUI.*`.
+  - **Fix**: added a database-only mode with safe implementations of `EnsureDBDefaults / GetRuneStyle / SetRuneStyle` and no-op visual update methods.
 
-- [x] **Core.lua + Options.lua** — `/or config` открывал настройки через `Settings.GetCategory("Old Runes")`, но в Settings используется числовой `categoryID`.
-  - **Fix**: при регистрации категории сохраняется `category:GetID()` в `OldRunesUI.settingsCategoryID`; `/or config` открывает категорию по сохранённому ID.
+- [x] **Core.lua + Options.lua** — `/or config` opened Settings through `Settings.GetCategory("Old Runes")`, but Settings uses a numeric `categoryID`.
+  - **Fix**: category registration now stores `category:GetID()` in `OldRunesUI.settingsCategoryID`; `/or config` opens the saved numeric ID.
 
-- [x] **Core.lua** — `suppressHookRefresh` мог остаться `true` при ошибке внутри принудительного `UpdateRunes`.
-  - **Fix**: обновление кадров вынесено в helper с `pcall` и гарантированным reset флага.
+- [x] **Core.lua** — `suppressHookRefresh` could remain `true` if a forced `UpdateRunes` call failed.
+  - **Fix**: frame updates were moved into a helper using `pcall` with a guaranteed flag reset.
 
-- [x] **Options.lua** — регистрация категории усилена: если `Settings` API недоступен при file-load, выполняется отложенная повторная регистрация (`PLAYER_LOGIN` / `ADDON_LOADED Blizzard_Settings`).
+- [x] **Options.lua** — category registration was hardened: if the `Settings` API is unavailable during file load, registration is retried later on `PLAYER_LOGIN` / `ADDON_LOADED Blizzard_Settings`.
 
-- [x] **Options.lua** — убрана жесткая зависимость от deprecated-шаблона чекбокса.
-  - **Fix**: `CreateOptionCheckButton()` переведен на `UICheckButtonTemplate` (без deprecated template), label/tooltip рендерятся напрямую.
+- [x] **Options.lua** — removed the hard dependency on the deprecated checkbox template.
+  - **Fix**: `CreateOptionCheckButton()` now uses `UICheckButtonTemplate`; labels and tooltips are rendered directly.
 
-- [x] **Core.lua** — slash handler потенциально падал при `nil`-сообщении.
-  - **Fix**: `msg:lower()` заменен на `(msg or ""):lower()`.
+- [x] **Core.lua** — the slash handler could fail on a `nil` message.
+  - **Fix**: replaced `msg:lower()` with `(msg or ""):lower()`.
 
-- [x] **Core.lua** — путь `DK-BloodUnholy-Rune-CDSpark` приведен к единому регистру (`PLAYERFRAME`) для лучшей совместимости с case-sensitive FS.
+- [x] **Core.lua** — normalized the `DK-BloodUnholy-Rune-CDSpark` path to consistent uppercase `PLAYERFRAME` for better compatibility with case-sensitive file systems.
 
 ### ✅ Verified facts (Blizzard source)
 
-- [x] `InterfaceOptionsCheckButtonTemplate` помечен deprecated, но присутствует в build `12.0.1` (`Blizzard_FrameXML/DeprecatedTemplates.xml`).
-- [x] `Settings.RegisterCanvasLayoutCategory` принимает `(frame, name)`; `SettingsCategoryMixin:GetID()` возвращает числовой ID категории.
+- [x] `InterfaceOptionsCheckButtonTemplate` is marked deprecated but is still present in build `12.0.1` (`Blizzard_FrameXML/DeprecatedTemplates.xml`).
+- [x] `Settings.RegisterCanvasLayoutCategory` accepts `(frame, name)`; `SettingsCategoryMixin:GetID()` returns the numeric category ID.
 
 ### 🔎 Remaining in-game verification
 
-- [ ] Проверить `/or config` сразу после логина и после `/reload`.
-- [ ] Проверить открытие настроек на non-DK персонаже (без Lua errors).
-- [ ] Проверить рендер спирали/таймера рун на всех DK-спеках в бою и вне боя.
+- [ ] Verify `/or config` immediately after login and after `/reload`.
+- [ ] Verify Settings can be opened on a non-DK character without Lua errors.
+- [ ] Verify rune spiral/timer rendering for every DK specialization in and out of combat.
 
 ---
 
@@ -190,39 +190,39 @@
 
 ### 🔴 Bugs / Will Error
 
-- [x] **Options.lua:21,31,41,51,65,70,75** — obsolete после pass 2026-03-03.
-  - Зависимость от `InterfaceOptionsCheckButtonTemplate` полностью убрана; используется `UICheckButtonTemplate`.
+- [x] **Options.lua:21,31,41,51,65,70,75** — obsolete after the 2026-03-03 pass.
+  - The dependency on `InterfaceOptionsCheckButtonTemplate` was fully removed; `UICheckButtonTemplate` is used instead.
 
-- [x] **Options.lua:133** — fixed в pass 2026-03-03.
-  - Регистрация обёрнута в `RegisterOptionsCategory()` с отложенной повторной попыткой (`PLAYER_LOGIN`/`ADDON_LOADED`).
+- [x] **Options.lua:133** — fixed in the 2026-03-03 pass.
+  - Registration is wrapped in `RegisterOptionsCategory()` with a deferred retry on `PLAYER_LOGIN` / `ADDON_LOADED`.
 
-### 🟡 Потенциальные проблемы
+### 🟡 Potential Issues
 
-- [x] **Core.lua:731** — fixed в pass 2026-03-03.
-  - `/or config` теперь использует сохранённый `category:GetID()` через `OldRunesUI.settingsCategoryID`.
+- [x] **Core.lua:731** — fixed in the 2026-03-03 pass.
+  - `/or config` now uses the stored `category:GetID()` through `OldRunesUI.settingsCategoryID`.
 
-- [x] **Core.lua:40** — fixed в pass 2026-03-03.
-  - Путь edge-текстуры приведен к `Interface\\PLAYERFRAME\\DK-BloodUnholy-Rune-CDSpark`.
+- [x] **Core.lua:40** — fixed in the 2026-03-03 pass.
+  - The edge texture path was normalized to `Interface\\PLAYERFRAME\\DK-BloodUnholy-Rune-CDSpark`.
 
-- [x] **OldRunes.toc:1** — verified on local client.
+- [x] **OldRunes.toc:1** — verified on the local client.
   - `%WOW_RETAIL%\WTF\Config.wtf` contains `SET lastAddonVersion "120001"`; the current `## Interface` covers that build.
 
-- [x] **Core.lua:5** — оставлено осознанно.
-  - Это безопасный bootstrap-паттерн с последующим `EnsureDBDefaults()`; ошибок/потери данных не даёт.
+- [x] **Core.lua:5** — intentionally retained.
+  - This is a safe bootstrap pattern followed by `EnsureDBDefaults()`; it does not cause errors or data loss.
 
-### 🟢 Качество кода / Нитпики
+### 🟢 Code Quality / Nitpicks
 
-- [x] **Options.lua:4-6** — fixed в pass 2026-03-03.
-  - Константы экспортированы через `OldRunesUI.RUNE_STYLE_*` в `Core.lua` и переиспользуются в `Options.lua`.
+- [x] **Options.lua:4-6** — fixed in the 2026-03-03 pass.
+  - Constants are exported through `OldRunesUI.RUNE_STYLE_*` in `Core.lua` and reused in `Options.lua`.
 
-- [x] **Core.lua:50** — fixed в pass 2026-03-03.
-  - Добавлен helper с `pcall` и гарантированным reset `suppressHookRefresh`.
+- [x] **Core.lua:50** — fixed in the 2026-03-03 pass.
+  - Added a helper using `pcall` and a guaranteed reset of `suppressHookRefresh`.
 
 - [x] **Localization.lua** — intentional.
-  - `ADDON_NAME` не локализуется намеренно (бренд/идентичность аддона).
+  - `ADDON_NAME` is deliberately not localized because it is the addon's brand/identity.
 
 - [x] **Core.lua:564-566** — verified/fixed.
-  - Рекурсия блокируется `suppressHookRefresh`; флаг защищён `pcall`-guard и всегда сбрасывается.
+  - Recursion is blocked by `suppressHookRefresh`; the flag is protected by the `pcall` guard and always reset.
 
 ## Fixed Issues
 - [x] Wrong rune access: `_G["RuneButtonIndividual"..i]` → `RuneFrame.Runes[i]`
@@ -234,10 +234,10 @@
 - [x] DepleteVisuals layers hidden when custom texture active
 
 ## Open Questions (need verification in-game)
-- [ ] Old textures still exist in 12.x client?
+- [ ] Old textures still exist in the 12.x client?
   - Path: `Interface\PLAYERFRAME\UI-PlayerFrame-Deathknight-Blood` etc.
-  - If not found, will show green/missing texture
-  - Fallback: May need alternative textures if Blizzard removed them
+  - If not found, the client will show a green/missing texture.
+  - Fallback: alternative textures may be required if Blizzard removed them.
 
 ## Implementation Notes
 
