@@ -2,15 +2,6 @@ name: Release addon
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - OldRunes.toc
-      - Localization.lua
-      - Core.lua
-      - Options.lua
-      - .github/workflows/release.yml
 
 permissions:
   contents: write
