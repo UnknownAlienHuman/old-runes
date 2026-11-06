@@ -61,8 +61,6 @@ This is not a substitute for a named Retail-client test. Texture resolution, act
 
 - [Architecture](ARCHITECTURE.md)
 - [Agent guide](AGENT_GUIDE.md)
-- [Code index](CODE_INDEX.md)
-- [Code graph](CODE_GRAPH.md)
 - [Changelog](CHANGELOG.md)
 - [Live-client matrix](todo.md)
 - [WoW addon engineering knowledge base](https://github.com/UnknownAlienHuman/wow-addon-engineering-kb)
