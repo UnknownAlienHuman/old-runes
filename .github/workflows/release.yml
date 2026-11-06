@@ -86,7 +86,7 @@ jobs:
                   raise SystemExit(f"forbidden runtime pattern: {pattern}")
 
           required = (
-              'local classFrame = prdFrame.classFrame',
+              'classFrame = prdFrame.classFrame',
               'hooksecurefunc(frame, "UpdateRunes"',
               'PLAYER_REGEN_ENABLED',
               'db.multicolorRunes = nil',
