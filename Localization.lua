@@ -1,5 +1,10 @@
 -- Old Runes localization
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "DEATHKNIGHT" then
+    return
+end
+
 OldRunesUI = OldRunesUI or {}
 
 local base = {
@@ -21,7 +26,6 @@ local base = {
     MSG_STYLE_SET = "Style set to %s",
     MSG_STYLE_USAGE = "Usage: /or style spec|mixed|death|specless",
     MSG_SETTINGS_NOT_READY = "Settings are not registered yet. Reload the UI.",
-    MSG_REVERSE_REMOVED = "Reverse recovery was removed because it taints Blizzard's managed rune layout.",
 
     STATE_ON = "ON",
     STATE_OFF = "OFF",
@@ -66,7 +70,6 @@ local spanish = {
     MSG_STYLE_SET = "Estilo establecido: %s",
     MSG_STYLE_USAGE = "Uso: /or style spec|mixed|death|specless",
     MSG_SETTINGS_NOT_READY = "Los ajustes aún no están registrados. Recarga la interfaz.",
-    MSG_REVERSE_REMOVED = "La recuperación inversa se eliminó porque contamina el diseño administrado por Blizzard.",
 
     STATE_ON = "ACTIVADO",
     STATE_OFF = "DESACTIVADO",
@@ -112,7 +115,6 @@ local locales = {
         MSG_STYLE_SET = "Стиль установлен: %s",
         MSG_STYLE_USAGE = "Использование: /or style spec|mixed|death|specless",
         MSG_SETTINGS_NOT_READY = "Настройки ещё не зарегистрированы. Перезагрузите интерфейс.",
-        MSG_REVERSE_REMOVED = "Обратное восстановление удалено: оно загрязняет управляемую Blizzard раскладку рун.",
 
         STATE_ON = "ВКЛ",
         STATE_OFF = "ВЫКЛ",
@@ -158,7 +160,6 @@ local locales = {
         MSG_STYLE_SET = "样式已设为：%s",
         MSG_STYLE_USAGE = "用法：/or style spec|mixed|death|specless",
         MSG_SETTINGS_NOT_READY = "设置尚未注册，请重载界面。",
-        MSG_REVERSE_REMOVED = "反向恢复已移除，因为它会污染暴雪管理的符文布局。",
 
         STATE_ON = "开启",
         STATE_OFF = "关闭",
@@ -202,7 +203,6 @@ local locales = {
         MSG_STYLE_SET = "樣式已設為：%s",
         MSG_STYLE_USAGE = "用法：/or style spec|mixed|death|specless",
         MSG_SETTINGS_NOT_READY = "設定尚未註冊，請重新載入介面。",
-        MSG_REVERSE_REMOVED = "反向恢復已移除，因為它會污染暴雪管理的符文配置。",
 
         STATE_ON = "開啟",
         STATE_OFF = "關閉",

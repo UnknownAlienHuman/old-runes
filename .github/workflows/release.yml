@@ -69,6 +69,7 @@ jobs:
               if data.startswith(b"\xef\xbb\xbf") or b"\r\n" in data:
                   raise SystemExit(f"invalid encoding or line endings: {name}")
 
+          localization = Path("Localization.lua").read_text(encoding="utf-8")
           core = Path("Core.lua").read_text(encoding="utf-8")
           options = Path("Options.lua").read_text(encoding="utf-8")
           tests = Path("tests/test_core.lua").read_text(encoding="utf-8")
@@ -106,6 +107,14 @@ jobs:
               if needle not in core:
                   raise SystemExit(f"missing runtime invariant: {needle}")
 
+          required_localization = (
+              'local _, playerClass = UnitClass("player")',
+              'if playerClass ~= "DEATHKNIGHT" then',
+          )
+          for needle in required_localization:
+              if needle not in localization:
+                  raise SystemExit(f"missing localization class gate: {needle}")
+
           required_options = (
               'local _, playerClass = UnitClass("player")',
               'if playerClass ~= "DEATHKNIGHT" then',
@@ -117,8 +126,8 @@ jobs:
           if "non_dk" in tests:
               raise SystemExit("irrelevant non-DK runtime scenario returned")
 
-          surface = Path("Localization.lua").read_text(encoding="utf-8") + options
-          for removed in ("OPT_REVERSE", "CMD_DESC_REVERSE", "prdClassFrame"):
+          surface = localization + options
+          for removed in ("OPT_REVERSE", "CMD_DESC_REVERSE", "MSG_REVERSE_REMOVED", "prdClassFrame"):
               if removed in surface:
                   raise SystemExit(f"removed user surface returned: {removed}")
           PY

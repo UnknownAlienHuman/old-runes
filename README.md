@@ -34,7 +34,7 @@ The integration is checked against `Gethe/wow-ui-source` build `12.1.5.70688` (`
 
 ## Safety boundary
 
-The first runtime gate exits unless the player is a Death Knight. No database migration, settings registration, slash command, frame hook, timer, or rune presentation owner is created outside that class.
+Every loaded Lua file (`Localization.lua`, `Core.lua`, and `Options.lua`) exits immediately unless the player is a Death Knight. No addon global, localization table, database migration, Settings category, slash command, event owner, hook, timer, or presentation state is created on another class.
 
 Old Runes does not assign `layoutIndex`, call Blizzard layout methods, replace `UpdateRunes`, or force rune updates. It discovers only the two reviewed frame paths and uses post-hooks. Overlay creation, owner replacement, Blizzard-art visibility changes, and configuration commits are deferred until combat ends.
 
@@ -43,6 +43,7 @@ Old Runes does not assign `layoutIndex`, call Blizzard layout methods, replace `
 Repository checks cover:
 
 - Lua 5.1 parsing;
+- hard Death Knight gates in every loaded Lua file;
 - schema migration and malformed-value normalization;
 - player and PRD discovery, replacement, release, and overlay reuse;
 - all four styles and specialization reapplication;

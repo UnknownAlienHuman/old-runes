@@ -11,7 +11,7 @@ Old Runes is a Death Knight presentation addon. Blizzard owns rune identity, ord
 
 ## Startup gate
 
-`Core.lua` and `Options.lua` return immediately unless `UnitClass("player")` resolves to `DEATHKNIGHT`. The gate precedes database migration, slash-command registration, Settings construction, events, hooks, timers, and presentation state.
+`Localization.lua`, `Core.lua`, and `Options.lua` return immediately unless `UnitClass("player")` resolves to `DEATHKNIGHT`. The gate precedes addon-global creation, localization tables, database migration, slash-command registration, Settings construction, events, hooks, timers, and presentation state.
 
 ## Frame ownership
 

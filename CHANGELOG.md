@@ -7,7 +7,7 @@
 - Targeted Retail 12.1.5 / Interface `120105`.
 - Rechecked `RuneFrame` and `PersonalResourceDisplayFrame.classFrame` against source builds `70688` and `70783`.
 - Kept exact frame discovery and post-hook-only integration.
-- Made the addon strictly Death Knight-scoped: runtime and Settings exit before creating any owner on other classes.
+- Made the addon strictly Death Knight-scoped: every loaded Lua file exits before creating any addon state on another class.
 
 ### Fixed
 
@@ -21,7 +21,7 @@
 
 ### Cleaned
 
-- Removed the nonfunctional reverse-layout setting from UI, help, defaults, and persistence.
+- Removed the nonfunctional reverse-layout setting from UI, help, defaults, persistence, and localization.
 - Removed obsolete compatibility slash-command branches.
 - Converted `multicolorRunes` to a one-way data migration and removed the legacy key afterward.
 - Removed internal implementation names from user-facing tooltips.
@@ -29,7 +29,7 @@
 
 ### Validation
 
-- Lua 5.1 syntax, focused DK runtime tests, Settings wiring, lifecycle invariants, and exact package contents are automated.
+- Lua 5.1 syntax, hard class gates in all loaded Lua files, focused DK runtime tests, Settings wiring, lifecycle invariants, and exact package contents are automated.
 - Regression coverage includes release, reuse, empty/missing rune lists, combat reconciliation, bounded timers, stale owners, inaccessible objects, brightness caching, and deferred MIXED style changes.
 - Mock tests do not replace live-client taint, forbidden-action, texture, and visual checks.
 

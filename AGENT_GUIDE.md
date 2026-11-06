@@ -13,7 +13,7 @@ Read `wow-addon-engineering-kb/INDEX_MINI.md`, the 12.1.5 live/second-pass overl
 
 ## Non-negotiable invariants
 
-- Exit before database, commands, settings, hooks, frames, or timers unless `UnitClass("player")` is `DEATHKNIGHT`.
+- Every loaded Lua file must exit before creating any addon state unless `UnitClass("player")` is `DEATHKNIGHT`.
 - Never assign `rune.layoutIndex`.
 - Never call `frame:Layout()` or `frame:UpdateRunes(false)`.
 - Never replace `UpdateRunes`; use a post-hook.
@@ -23,7 +23,7 @@ Read `wow-addon-engineering-kb/INDEX_MINI.md`, the 12.1.5 live/second-pass overl
 - Keep exactly one current player owner and one current PRD class-frame owner; release replacements instead of accumulating them.
 - Disabling PRD styling or releasing an accessible rune must restore Blizzard art and cooldown defaults.
 - Cancel old readiness timers before replacement and clear each completed handle by its captured slot.
-- Do not reintroduce reverse layout or compatibility slash-command branches.
+- Do not reintroduce reverse layout, compatibility slash-command branches, or dead localization strings.
 - Do not persist frames, regions, timers, hooks, or presentation caches.
 
 ## Local checks
