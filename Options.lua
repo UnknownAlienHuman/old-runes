@@ -1,6 +1,14 @@
 -- Old Runes Settings panel
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "DEATHKNIGHT" then
+    return
+end
+
 local API = OldRunesUI
+if not API then
+    return
+end
 local L = API.L or {}
 
 local panel = CreateFrame("Frame")

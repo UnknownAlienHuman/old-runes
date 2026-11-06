@@ -19,11 +19,15 @@ local function assertEqual(actual, expected, message)
     end
 end
 
+_G.UnitClass = function()
+    return "Death Knight", "DEATHKNIGHT", 6
+end
+
 local function NewFontString()
     local font = { text = "" }
     function font:SetPoint() end
     function font:SetJustifyH() end
-    function font:SetText(text) self.text = text end
+    function font:SetText(value) self.text = value end
     return font
 end
 
@@ -102,8 +106,13 @@ _G.OldRunesUI = {
     RUNE_STYLE_SPECLESS = "SPECLESS",
     EnsureDBDefaults = function() end,
     GetRuneStyle = function() return OldRunesDB.runeStyle end,
-    SetRuneStyle = function(style) OldRunesDB.runeStyle = style return true end,
-    RefreshAll = function() refreshCount = refreshCount + 1 end,
+    SetRuneStyle = function(style)
+        OldRunesDB.runeStyle = style
+        return true
+    end,
+    RefreshAll = function()
+        refreshCount = refreshCount + 1
+    end,
 }
 
 assert(loadfile("Options.lua"))("OldRunes", {})

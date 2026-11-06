@@ -13,23 +13,24 @@ Read `wow-addon-engineering-kb/INDEX_MINI.md`, the 12.1.5 live/second-pass overl
 
 ## Non-negotiable invariants
 
+- Exit before database, commands, settings, hooks, frames, or timers unless `UnitClass("player")` is `DEATHKNIGHT`.
 - Never assign `rune.layoutIndex`.
 - Never call `frame:Layout()` or `frame:UpdateRunes(false)`.
 - Never replace `UpdateRunes`; use a post-hook.
 - Never enumerate frame children to discover rune frames.
 - Never create overlay regions or change Blizzard rune-art visibility in combat.
 - Keep discovery limited to `RuneFrame` and `PersonalResourceDisplayFrame.classFrame` unless selected source proves a new path.
-- Keep exactly one owner for the current player frame and one for the current PRD class frame; detach replacements instead of accumulating tracked frames.
-- Disabling PRD styling must restore Blizzard art and cooldown defaults.
-- Do not reintroduce reverse layout without a source-confirmed, taint-safe public contract.
+- Keep exactly one current player owner and one current PRD class-frame owner; release replacements instead of accumulating them.
+- Disabling PRD styling or releasing an accessible rune must restore Blizzard art and cooldown defaults.
+- Cancel old readiness timers before replacement and clear each completed handle by its captured slot.
+- Do not reintroduce reverse layout or compatibility slash-command branches.
 - Do not persist frames, regions, timers, hooks, or presentation caches.
 
 ## Local checks
 
 ```bash
 luac5.1 -p Localization.lua Core.lua Options.lua tests/test_core.lua tests/test_options.lua
-lua5.1 tests/test_core.lua non_dk
-lua5.1 tests/test_core.lua dk
+lua5.1 tests/test_core.lua
 lua5.1 tests/test_options.lua
 ```
 

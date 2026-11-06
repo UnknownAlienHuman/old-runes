@@ -1,7 +1,11 @@
 -- Old Runes (Retail 12.1.5)
--- Restores classic Death Knight rune textures without owning Blizzard layout.
+-- Classic Death Knight rune art on Blizzard-owned rune frames.
 
 local ADDON_NAME = ... or "OldRunes"
+local _, playerClass = UnitClass("player")
+if playerClass ~= "DEATHKNIGHT" then
+    return
+end
 
 OldRunesUI = OldRunesUI or {}
 
@@ -102,7 +106,6 @@ local function EnsureDBDefaults()
         db.runeStyle = DEFAULTS.runeStyle
     end
 
-    -- One-way compatibility cleanup. These fields no longer own runtime state.
     db.multicolorRunes = nil
     db.reverseRecoveryOrder = nil
     db.schema = DB_SCHEMA
@@ -138,10 +141,6 @@ end
 API.EnsureDBDefaults = EnsureDBDefaults
 API.GetRuneStyle = GetRuneStyle
 API.SetRuneStyle = SetRuneStyle
-
-local _, playerClass = UnitClass("player")
-local isDeathKnight = playerClass == "DEATHKNIGHT"
-API.isDeathKnight = isDeathKnight
 
 local function IsInCombat()
     return InCombatLockdown and InCombatLockdown()
@@ -233,613 +232,605 @@ local function PrintHelp()
     print("  |cff4db7ff/or config|r - " .. (L.CMD_DESC_CONFIG or "Open settings"))
 end
 
--- Runtime integration is installed only for Death Knights. Shared configuration,
--- migration and slash commands remain available on every character.
-local trackedRuneFrames
-local frameHooks
-local prdHooks
-local runeState
-local runeOverlays
-local cooldownState
+local trackedRuneFrames = {}
+local frameHooks = setmetatable({}, { __mode = "k" })
+local prdHooks = setmetatable({}, { __mode = "k" })
+local runeState = setmetatable({}, { __mode = "k" })
+local runeOverlays = setmetatable({}, { __mode = "kv" })
+local cooldownState = setmetatable({}, { __mode = "k" })
+
 local pendingCombatRefresh = false
 local refreshGeneration = 0
 local currentPlayerRuneFrame
 local currentPRDClassFrame
 local RefreshRuneVisuals
 local QueueRefreshBurst
+local ReleaseRune
 
-local function NoopRefresh()
+local function MarkCombatRefresh()
+    pendingCombatRefresh = true
 end
 
-API.RefreshAll = NoopRefresh
-
-if isDeathKnight then
-    trackedRuneFrames = {}
-    frameHooks = setmetatable({}, { __mode = "k" })
-    prdHooks = setmetatable({}, { __mode = "k" })
-    runeState = setmetatable({}, { __mode = "k" })
-    -- Native runes retain their textures. Weak values avoid retaining the rune
-    -- through its texture's parent in Lua 5.1; recycled runes reuse that texture.
-    runeOverlays = setmetatable({}, { __mode = "kv" })
-    cooldownState = setmetatable({}, { __mode = "k" })
-
-    local function MarkCombatRefresh()
-        pendingCombatRefresh = true
+local function GetOrCreateRuneState(rune)
+    local state = runeState[rune]
+    if not state then
+        state = {}
+        runeState[rune] = state
     end
+    return state
+end
 
-    local function GetOrCreateRuneState(rune)
-        local state = runeState[rune]
-        if not state then
-            state = {}
-            runeState[rune] = state
-        end
-        return state
+local function GetOrCreateCooldownState(cooldown)
+    local state = cooldownState[cooldown]
+    if not state then
+        state = {}
+        cooldownState[cooldown] = state
     end
+    return state
+end
 
-    local function GetOrCreateCooldownState(cooldown)
-        local state = cooldownState[cooldown]
-        if not state then
-            state = {}
-            cooldownState[cooldown] = state
-        end
-        return state
+local function IsPersonalResourceFrame(frame)
+    local prdFrame = PersonalResourceDisplayFrame
+    return IsObjectAccessible(prdFrame) and frame == prdFrame.classFrame
+end
+
+local function IsFrameEnabled(frameData)
+    if frameData.isPersonal then
+        return GetDB().oldPersonalResourceDisplay
     end
+    return true
+end
 
-    local function IsPersonalResourceFrame(frame)
-        local prdFrame = PersonalResourceDisplayFrame
-        return IsObjectAccessible(prdFrame) and frame == prdFrame.classFrame
+local function GetCurrentSpecIndex()
+    if C_SpecializationInfo and C_SpecializationInfo.GetSpecialization then
+        return C_SpecializationInfo.GetSpecialization()
     end
+    return nil
+end
 
-    local function IsFrameEnabled(frameData)
-        if frameData.isPersonal then
-            return GetDB().oldPersonalResourceDisplay
-        end
-        return true
-    end
+local function GetCurrentArtType()
+    return SPEC_TO_RUNE[GetCurrentSpecIndex()]
+end
 
-    local function GetCurrentSpecIndex()
-        if C_SpecializationInfo and C_SpecializationInfo.GetSpecialization then
-            return C_SpecializationInfo.GetSpecialization()
-        end
+local function EnsureRuneOverlay(rune)
+    if not IsObjectAccessible(rune) then
         return nil
     end
 
-    local function GetCurrentArtType()
-        return SPEC_TO_RUNE[GetCurrentSpecIndex()]
-    end
-
-    local ReleaseRune
-
-    local function EnsureRuneOverlay(rune)
-        if not IsObjectAccessible(rune) then
-            return nil
-        end
-
-        local existing = runeOverlays[rune]
-        if existing then
-            return existing
-        end
-
-        if IsInCombat() then
-            MarkCombatRefresh()
-            return nil
-        end
-
-        local overlay = rune:CreateTexture(nil, "ARTWORK", nil, 4)
-        overlay:SetAllPoints(rune)
-        overlay:Hide()
-        runeOverlays[rune] = overlay
+    local overlay = runeOverlays[rune]
+    if overlay then
         return overlay
     end
 
-    local function InitializeRuneFrame(frame)
-        if not IsObjectAccessible(frame)
-            or (frame ~= RuneFrame and not IsPersonalResourceFrame(frame)) then
-            return nil
-        end
-
-        local sourceRunes = frame.Runes
-        local newCount = type(sourceRunes) == "table" and #sourceRunes or 0
-        local frameData = trackedRuneFrames[frame]
-        if not frameData then
-            if newCount == 0 then
-                return nil
-            end
-            frameData = {
-                runes = {},
-                count = 0,
-                isPersonal = false,
-            }
-            trackedRuneFrames[frame] = frameData
-        end
-
-        frameData.isPersonal = IsPersonalResourceFrame(frame)
-
-        local oldCount = frameData.count
-
-        for i = 1, newCount do
-            local rune = sourceRunes[i]
-            if rune and IsObjectAccessible(rune) then
-                if frameData.runes[i] ~= rune then
-                    local oldRune = frameData.runes[i]
-                    if oldRune then
-                        ReleaseRune(oldRune)
-                    end
-                    frameData.runes[i] = rune
-                end
-            else
-                local oldRune = frameData.runes[i]
-                if oldRune then
-                    ReleaseRune(oldRune)
-                end
-                frameData.runes[i] = nil
-            end
-        end
-
-        for i = newCount + 1, oldCount do
-            local oldRune = frameData.runes[i]
-            if oldRune then
-                ReleaseRune(oldRune)
-            end
-            frameData.runes[i] = nil
-        end
-
-        frameData.count = newCount
-        if newCount == 0 then
-            trackedRuneFrames[frame] = nil
-            return nil
-        end
-        return frameData
-    end
-
-    local function ForgetRuneFrame(frame)
-        local frameData = frame and trackedRuneFrames[frame]
-        if not frameData then
-            return
-        end
-
-        for i = 1, frameData.count do
-            ReleaseRune(frameData.runes[i])
-            frameData.runes[i] = nil
-        end
-        frameData.count = 0
-        trackedRuneFrames[frame] = nil
-    end
-
-    local function SetLayerShown(layer, shown)
-        if not layer then
-            return
-        end
-        if shown then
-            layer:Show()
-        else
-            layer:Hide()
-        end
-    end
-
-    local function SetAtlasLayersHidden(rune, hidden, force)
-        local state = GetOrCreateRuneState(rune)
-        if not force and state.atlasHidden == hidden then
-            return true
-        end
-
-        if IsInCombat() then
-            MarkCombatRefresh()
-            return false
-        end
-
-        local shown = not hidden
-        for i = 1, #ATLAS_LAYERS do
-            SetLayerShown(rune[ATLAS_LAYERS[i]], shown)
-        end
-
-        local depleteVisuals = rune.DepleteVisuals
-        if depleteVisuals then
-            for i = 1, #DEPLETE_LAYERS do
-                SetLayerShown(depleteVisuals[DEPLETE_LAYERS[i]], shown)
-            end
-        end
-
-        state.atlasHidden = hidden
-        return true
-    end
-
-    local function GetMixedTexture(rune, fallbackIndex)
-        local visualIndex = fallbackIndex
-        if type(rune.layoutIndex) == "number" and rune.layoutIndex > 0 then
-            visualIndex = rune.layoutIndex
-        end
-
-        if visualIndex <= 2 then
-            return RUNE_TEXTURES.BLOOD
-        elseif visualIndex <= 4 then
-            return RUNE_TEXTURES.FROST
-        end
-        return RUNE_TEXTURES.UNHOLY
-    end
-
-    local function GetTextureForRune(rune, fallbackIndex, artType, style)
-        if style == RUNE_STYLE_MIXED then
-            return GetMixedTexture(rune, fallbackIndex)
-        elseif style == RUNE_STYLE_DEATH then
-            return RUNE_TEXTURES.DEATH
-        elseif style == RUNE_STYLE_SPEC and artType then
-            return RUNE_TEXTURES[artType]
-        end
+    if IsInCombat() then
+        MarkCombatRefresh()
         return nil
     end
 
-    local function GetRuneReady(rune)
-        local lastState = rune.lastRuneState
-        if type(lastState) == "table" and type(lastState.runeReady) == "boolean" then
-            return lastState.runeReady
-        end
+    overlay = rune:CreateTexture(nil, "ARTWORK", nil, 4)
+    overlay:SetAllPoints(rune)
+    overlay:Hide()
+    runeOverlays[rune] = overlay
+    return overlay
+end
 
-        if GetRuneCooldown and rune.runeIndex then
-            local _, _, ready = GetRuneCooldown(rune.runeIndex)
-            return ready == true
-        end
+local function SetLayerShown(layer, shown)
+    if not layer then
+        return
+    end
+    if shown then
+        layer:Show()
+    else
+        layer:Hide()
+    end
+end
+
+local function SetAtlasLayersHidden(rune, hidden, force)
+    local state = GetOrCreateRuneState(rune)
+    if not force and state.atlasHidden == hidden then
         return true
     end
 
-    local function UpdateOverlayBrightness(rune, overlay)
-        if not overlay or not overlay:IsShown() then
-            return
-        end
-
-        local ready = GetRuneReady(rune)
-        local state = GetOrCreateRuneState(rune)
-        if state.ready == ready then
-            return
-        end
-        if ready then
-            overlay:SetVertexColor(1, 1, 1)
-        else
-            overlay:SetVertexColor(0.4, 0.4, 0.4)
-        end
-        state.ready = ready
+    if IsInCombat() then
+        MarkCombatRefresh()
+        return false
     end
 
-    local function ApplyBlizzardArt(rune, specIndex, artToken)
-        if type(rune.UpdateSpec) ~= "function" then
+    local shown = not hidden
+    for i = 1, #ATLAS_LAYERS do
+        SetLayerShown(rune[ATLAS_LAYERS[i]], shown)
+    end
+
+    local depleteVisuals = rune.DepleteVisuals
+    if depleteVisuals then
+        for i = 1, #DEPLETE_LAYERS do
+            SetLayerShown(depleteVisuals[DEPLETE_LAYERS[i]], shown)
+        end
+    end
+
+    state.atlasHidden = hidden
+    return true
+end
+
+local function GetMixedTexture(rune, fallbackIndex)
+    local visualIndex = fallbackIndex
+    if type(rune.layoutIndex) == "number" and rune.layoutIndex > 0 then
+        visualIndex = rune.layoutIndex
+    end
+
+    if visualIndex <= 2 then
+        return RUNE_TEXTURES.BLOOD
+    elseif visualIndex <= 4 then
+        return RUNE_TEXTURES.FROST
+    end
+    return RUNE_TEXTURES.UNHOLY
+end
+
+local function GetTextureForRune(rune, fallbackIndex, artType, style)
+    if style == RUNE_STYLE_MIXED then
+        return GetMixedTexture(rune, fallbackIndex)
+    elseif style == RUNE_STYLE_DEATH then
+        return RUNE_TEXTURES.DEATH
+    elseif style == RUNE_STYLE_SPEC and artType then
+        return RUNE_TEXTURES[artType]
+    end
+    return nil
+end
+
+local function GetRuneReady(rune)
+    local lastState = rune.lastRuneState
+    if type(lastState) == "table" and type(lastState.runeReady) == "boolean" then
+        return lastState.runeReady
+    end
+
+    if GetRuneCooldown and rune.runeIndex then
+        local _, _, ready = GetRuneCooldown(rune.runeIndex)
+        return ready == true
+    end
+    return true
+end
+
+local function UpdateOverlayBrightness(rune, overlay)
+    if not overlay or not overlay:IsShown() then
+        return
+    end
+
+    local ready = GetRuneReady(rune)
+    local state = GetOrCreateRuneState(rune)
+    if state.ready == ready then
+        return
+    end
+
+    if ready then
+        overlay:SetVertexColor(1, 1, 1)
+    else
+        overlay:SetVertexColor(0.4, 0.4, 0.4)
+    end
+    state.ready = ready
+end
+
+local function ApplyBlizzardArt(rune, specIndex, artToken)
+    if type(rune.UpdateSpec) ~= "function" then
+        return false
+    end
+
+    local state = GetOrCreateRuneState(rune)
+    if state.artToken ~= artToken then
+        if IsInCombat() then
+            MarkCombatRefresh()
             return false
         end
-
-        local state = GetOrCreateRuneState(rune)
-        if state.artToken ~= artToken then
-            if IsInCombat() then
-                MarkCombatRefresh()
-                return false
-            end
-            rune:UpdateSpec(specIndex)
-            state.artToken = artToken
-            state.atlasHidden = nil
-        end
-
-        if not SetAtlasLayersHidden(rune, false, false) then
-            return false
-        end
-
-        local overlay = runeOverlays[rune]
-        if overlay and overlay:IsShown() then
-            overlay:Hide()
-        end
-        state.texturePath = nil
-        return true
+        rune:UpdateSpec(specIndex)
+        state.artToken = artToken
+        state.atlasHidden = nil
     end
 
-    local function ApplyCooldownPresentation(cooldown, hideNumbers, showSpiral)
-        if not IsObjectAccessible(cooldown) then
-            return
-        end
-
-        local state = GetOrCreateCooldownState(cooldown)
-        if state.hideNumbers ~= hideNumbers then
-            cooldown:SetHideCountdownNumbers(hideNumbers)
-            state.hideNumbers = hideNumbers
-        end
-        if state.drawSwipe ~= showSpiral then
-            cooldown:SetDrawSwipe(showSpiral)
-            state.drawSwipe = showSpiral
-        end
-        if state.drawEdge ~= showSpiral then
-            cooldown:SetDrawEdge(showSpiral)
-            state.drawEdge = showSpiral
-        end
+    if not SetAtlasLayersHidden(rune, false, false) then
+        return false
     end
 
-    ReleaseRune = function(rune)
-        if not rune or not runeState[rune] then
-            return
-        end
+    local overlay = runeOverlays[rune]
+    if overlay and overlay:IsShown() then
+        overlay:Hide()
+    end
+    state.texturePath = nil
+    state.ready = nil
+    return true
+end
 
-        -- Called only by out-of-combat reconciliation. Inaccessible objects
-        -- must be detached without calling their methods or reading children.
-        if IsObjectAccessible(rune) then
-            local specIndex = GetCurrentSpecIndex()
-            ApplyBlizzardArt(rune, specIndex, "BLIZZARD:" .. tostring(specIndex or "DEFAULT"))
-            local cooldown = rune.Cooldown
-            ApplyCooldownPresentation(cooldown, true, true)
-            if cooldown then
-                cooldownState[cooldown] = nil
-            end
-        end
-        runeState[rune] = nil
+local function ApplyClassicArt(rune, texturePath)
+    local overlay = EnsureRuneOverlay(rune)
+    if not overlay or not SetAtlasLayersHidden(rune, true, false) then
+        return false
     end
 
-    local function ApplyClassicArt(rune, texturePath)
-        local overlay = EnsureRuneOverlay(rune)
-        if not overlay or not SetAtlasLayersHidden(rune, true, false) then
-            return false
-        end
-
-        local state = GetOrCreateRuneState(rune)
-        if state.texturePath ~= texturePath then
-            overlay:SetTexture(texturePath)
-            state.texturePath = texturePath
-        end
-
-        if not overlay:IsShown() then
-            overlay:Show()
-        end
-        UpdateOverlayBrightness(rune, overlay)
-        state.artToken = "CLASSIC"
-        return true
+    local state = GetOrCreateRuneState(rune)
+    if state.texturePath ~= texturePath then
+        overlay:SetTexture(texturePath)
+        state.texturePath = texturePath
     end
 
-    local function InvalidateFramePresentation(frameData)
-        for i = 1, frameData.count do
-            local rune = frameData.runes[i]
-            if rune then
-                local state = GetOrCreateRuneState(rune)
-                state.artToken = nil
-                state.atlasHidden = nil
-                state.texturePath = nil
+    if not overlay:IsShown() then
+        overlay:Show()
+        state.ready = nil
+    end
+    UpdateOverlayBrightness(rune, overlay)
+    state.artToken = "CLASSIC"
+    return true
+end
 
-                local cooldown = rune.Cooldown
-                if cooldown then
-                    local cooldownData = GetOrCreateCooldownState(cooldown)
-                    cooldownData.hideNumbers = nil
-                    cooldownData.drawSwipe = nil
-                    cooldownData.drawEdge = nil
-                end
-            end
-        end
+local function ApplyCooldownPresentation(cooldown, hideNumbers, showSpiral)
+    if not IsObjectAccessible(cooldown) then
+        return
     end
 
-    local function ApplyFrameArt(frameData, artType)
-        local enabled = IsFrameEnabled(frameData)
-        local style = GetRuneStyle()
+    local state = GetOrCreateCooldownState(cooldown)
+    if state.hideNumbers ~= hideNumbers then
+        cooldown:SetHideCountdownNumbers(hideNumbers)
+        state.hideNumbers = hideNumbers
+    end
+    if state.drawSwipe ~= showSpiral then
+        cooldown:SetDrawSwipe(showSpiral)
+        state.drawSwipe = showSpiral
+    end
+    if state.drawEdge ~= showSpiral then
+        cooldown:SetDrawEdge(showSpiral)
+        state.drawEdge = showSpiral
+    end
+end
+
+ReleaseRune = function(rune)
+    if not rune or not runeState[rune] then
+        return
+    end
+
+    if IsObjectAccessible(rune) then
         local specIndex = GetCurrentSpecIndex()
-        frameData.style = style
-        frameData.artType = artType
+        ApplyBlizzardArt(rune, specIndex, "BLIZZARD:" .. tostring(specIndex or "DEFAULT"))
 
-        for i = 1, frameData.count do
-            local rune = frameData.runes[i]
-            if rune and IsObjectAccessible(rune) then
-                if not enabled then
-                    ApplyBlizzardArt(
-                        rune,
-                        specIndex,
-                        "BLIZZARD:" .. tostring(specIndex or "DEFAULT")
-                    )
-                elseif style == RUNE_STYLE_SPECLESS
-                    or (style == RUNE_STYLE_SPEC and not artType) then
-                    ApplyBlizzardArt(rune, nil, "SPECLESS")
-                else
-                    local texturePath = GetTextureForRune(rune, i, artType, style)
-                    if texturePath then
-                        ApplyClassicArt(rune, texturePath)
-                    end
+        local cooldown = rune.Cooldown
+        ApplyCooldownPresentation(cooldown, true, true)
+        if cooldown then
+            cooldownState[cooldown] = nil
+        end
+    end
+
+    runeState[rune] = nil
+end
+
+local function InitializeRuneFrame(frame)
+    if not IsObjectAccessible(frame)
+        or (frame ~= RuneFrame and not IsPersonalResourceFrame(frame)) then
+        return nil
+    end
+
+    local sourceRunes = frame.Runes
+    local newCount = type(sourceRunes) == "table" and #sourceRunes or 0
+    local frameData = trackedRuneFrames[frame]
+
+    if not frameData then
+        if newCount == 0 then
+            return nil
+        end
+        frameData = {
+            runes = {},
+            count = 0,
+            isPersonal = false,
+        }
+        trackedRuneFrames[frame] = frameData
+    end
+
+    frameData.isPersonal = IsPersonalResourceFrame(frame)
+
+    local oldCount = frameData.count
+    for i = 1, newCount do
+        local rune = sourceRunes[i]
+        if rune and IsObjectAccessible(rune) then
+            if frameData.runes[i] ~= rune then
+                ReleaseRune(frameData.runes[i])
+                frameData.runes[i] = rune
+            end
+        else
+            ReleaseRune(frameData.runes[i])
+            frameData.runes[i] = nil
+        end
+    end
+
+    for i = newCount + 1, oldCount do
+        ReleaseRune(frameData.runes[i])
+        frameData.runes[i] = nil
+    end
+
+    frameData.count = newCount
+    if newCount == 0 then
+        trackedRuneFrames[frame] = nil
+        return nil
+    end
+    return frameData
+end
+
+local function ForgetRuneFrame(frame)
+    local frameData = frame and trackedRuneFrames[frame]
+    if not frameData then
+        return
+    end
+
+    for i = 1, frameData.count do
+        ReleaseRune(frameData.runes[i])
+        frameData.runes[i] = nil
+    end
+    frameData.count = 0
+    trackedRuneFrames[frame] = nil
+end
+
+local function InvalidateFramePresentation(frameData)
+    for i = 1, frameData.count do
+        local rune = frameData.runes[i]
+        if rune then
+            local state = GetOrCreateRuneState(rune)
+            state.artToken = nil
+            state.atlasHidden = nil
+            state.texturePath = nil
+            state.ready = nil
+
+            local cooldown = rune.Cooldown
+            if cooldown then
+                local cooldownData = GetOrCreateCooldownState(cooldown)
+                cooldownData.hideNumbers = nil
+                cooldownData.drawSwipe = nil
+                cooldownData.drawEdge = nil
+            end
+        end
+    end
+end
+
+local function ApplyFrameArt(frameData, artType)
+    local enabled = IsFrameEnabled(frameData)
+    local style = GetRuneStyle()
+    local specIndex = GetCurrentSpecIndex()
+
+    frameData.style = style
+    frameData.artType = artType
+
+    for i = 1, frameData.count do
+        local rune = frameData.runes[i]
+        if rune and IsObjectAccessible(rune) then
+            if not enabled then
+                ApplyBlizzardArt(
+                    rune,
+                    specIndex,
+                    "BLIZZARD:" .. tostring(specIndex or "DEFAULT")
+                )
+            elseif style == RUNE_STYLE_SPECLESS
+                or (style == RUNE_STYLE_SPEC and not artType) then
+                ApplyBlizzardArt(rune, nil, "SPECLESS")
+            else
+                local texturePath = GetTextureForRune(rune, i, artType, style)
+                if texturePath then
+                    ApplyClassicArt(rune, texturePath)
                 end
             end
         end
     end
+end
 
-    local function SetCooldownPresentation(frameData)
-        local db = GetDB()
-        local enabled = IsFrameEnabled(frameData)
-        local hideNumbers = true
-        local showSpiral = true
-        if enabled then
-            hideNumbers = not db.showTimerNumbers
-            showSpiral = db.showCooldownSpiral
-        end
+local function SetCooldownPresentation(frameData)
+    local db = GetDB()
+    local enabled = IsFrameEnabled(frameData)
+    local hideNumbers = true
+    local showSpiral = true
 
-        for i = 1, frameData.count do
-            local rune = frameData.runes[i]
-            local cooldown = rune and rune.Cooldown
-            ApplyCooldownPresentation(cooldown, hideNumbers, showSpiral)
-        end
+    if enabled then
+        hideNumbers = not db.showTimerNumbers
+        showSpiral = db.showCooldownSpiral
     end
 
-    local function ApplyFramePresentation(frameData, artType)
+    for i = 1, frameData.count do
+        local rune = frameData.runes[i]
+        ApplyCooldownPresentation(
+            rune and rune.Cooldown,
+            hideNumbers,
+            showSpiral
+        )
+    end
+end
+
+local function ApplyFramePresentation(frameData, artType)
+    if not frameData then
+        return
+    end
+    ApplyFrameArt(frameData, artType)
+    SetCooldownPresentation(frameData)
+end
+
+local function UpdateActiveOverlays(frame, frameData)
+    if not frameData or type(frame.Runes) ~= "table" then
+        return
+    end
+
+    for i = 1, frameData.count do
+        local rune = frameData.runes[i]
+        if rune and frame.Runes[i] == rune and IsObjectAccessible(rune) then
+            local state = runeState[rune]
+            local overlay = runeOverlays[rune]
+            if state and state.artToken == "CLASSIC"
+                and overlay and overlay:IsShown() then
+                local texturePath = GetTextureForRune(
+                    rune,
+                    i,
+                    frameData.artType,
+                    frameData.style
+                )
+                if texturePath and state.texturePath ~= texturePath then
+                    overlay:SetTexture(texturePath)
+                    state.texturePath = texturePath
+                end
+                UpdateOverlayBrightness(rune, overlay)
+            end
+        end
+    end
+end
+
+local function HookRuneFrame(frame)
+    if frameHooks[frame] or type(frame.UpdateRunes) ~= "function" then
+        return
+    end
+
+    hooksecurefunc(frame, "UpdateRunes", function(updatedFrame, isSpecChange)
+        if not IsObjectAccessible(updatedFrame)
+            or (updatedFrame ~= RuneFrame and not IsPersonalResourceFrame(updatedFrame)) then
+            return
+        end
+
+        if IsInCombat() then
+            MarkCombatRefresh()
+            UpdateActiveOverlays(updatedFrame, trackedRuneFrames[updatedFrame])
+            return
+        end
+
+        local frameData = InitializeRuneFrame(updatedFrame)
         if not frameData then
             return
         end
-        ApplyFrameArt(frameData, artType)
-        SetCooldownPresentation(frameData)
-    end
 
-    local function UpdateActiveOverlays(frame, frameData)
-        if not frameData or type(frame.Runes) ~= "table" then
-            return
+        if isSpecChange then
+            InvalidateFramePresentation(frameData)
         end
+        ApplyFramePresentation(frameData, GetCurrentArtType())
+    end)
 
-        for i = 1, frameData.count do
-            local rune = frameData.runes[i]
-            if rune and frame.Runes[i] == rune and IsObjectAccessible(rune) then
-                local state = runeState[rune]
-                local overlay = runeOverlays[rune]
-                if state and state.artToken == "CLASSIC" and overlay and overlay:IsShown() then
-                    -- Keep the applied style until the pending configuration can
-                    -- be committed. MIXED still follows Blizzard's slot order.
-                    local path = GetTextureForRune(rune, i, frameData.artType, frameData.style)
-                    if path and state.texturePath ~= path then
-                        overlay:SetTexture(path)
-                        state.texturePath = path
-                    end
-                    UpdateOverlayBrightness(rune, overlay)
-                end
-            end
+    frameHooks[frame] = true
+end
+
+local function DiscoverRuneFrames()
+    local playerFrame = IsObjectAccessible(RuneFrame) and RuneFrame or nil
+    if currentPlayerRuneFrame ~= playerFrame then
+        ForgetRuneFrame(currentPlayerRuneFrame)
+        currentPlayerRuneFrame = playerFrame
+    end
+    if playerFrame then
+        local frameData = InitializeRuneFrame(playerFrame)
+        if frameData then
+            HookRuneFrame(playerFrame)
         end
     end
 
-    local function HookRuneFrame(frame)
-        if frameHooks[frame] or type(frame.UpdateRunes) ~= "function" then
-            return
+    local classFrame
+    local prdFrame = PersonalResourceDisplayFrame
+    if IsObjectAccessible(prdFrame)
+        and IsObjectAccessible(prdFrame.classFrame)
+        and prdFrame.classFrame ~= playerFrame then
+        classFrame = prdFrame.classFrame
+    end
+
+    if currentPRDClassFrame ~= classFrame then
+        ForgetRuneFrame(currentPRDClassFrame)
+        currentPRDClassFrame = classFrame
+    end
+    if classFrame then
+        local frameData = InitializeRuneFrame(classFrame)
+        if frameData then
+            HookRuneFrame(classFrame)
         end
+    end
+end
 
-        hooksecurefunc(frame, "UpdateRunes", function(updatedFrame, isSpecChange)
-            if not IsObjectAccessible(updatedFrame)
-                or (updatedFrame ~= RuneFrame and not IsPersonalResourceFrame(updatedFrame)) then
-                return
-            end
-            if IsInCombat() then
-                MarkCombatRefresh()
-                UpdateActiveOverlays(updatedFrame, trackedRuneFrames[updatedFrame])
-                return
-            end
-            if updatedFrame ~= currentPlayerRuneFrame and updatedFrame ~= currentPRDClassFrame then
-                RefreshRuneVisuals(false)
-                return
-            end
+local function HookPersonalResourceDisplay()
+    local prdFrame = PersonalResourceDisplayFrame
+    if not IsObjectAccessible(prdFrame) or prdHooks[prdFrame] then
+        return
+    end
 
-            local frameData = InitializeRuneFrame(updatedFrame)
-            if not frameData then
-                return
+    local hooked = false
+    if type(prdFrame.SetupClassBar) == "function" then
+        hooksecurefunc(prdFrame, "SetupClassBar", function(updatedFrame)
+            if updatedFrame == PersonalResourceDisplayFrame then
+                QueueRefreshBurst(true)
             end
-
-            if isSpecChange then
-                InvalidateFramePresentation(frameData)
-            end
-            ApplyFramePresentation(frameData, GetCurrentArtType())
         end)
-
-        frameHooks[frame] = true
+        hooked = true
     end
 
-    local function DiscoverRuneFrames()
-        local playerFrame = IsObjectAccessible(RuneFrame) and RuneFrame or nil
-        if currentPlayerRuneFrame ~= playerFrame then
-            ForgetRuneFrame(currentPlayerRuneFrame)
-            currentPlayerRuneFrame = playerFrame
-        end
-        if playerFrame then
-            local frameData = InitializeRuneFrame(playerFrame)
-            if frameData then
-                HookRuneFrame(playerFrame)
+    if type(prdFrame.SetHideClassInfo) == "function" then
+        hooksecurefunc(prdFrame, "SetHideClassInfo", function(updatedFrame)
+            if updatedFrame == PersonalResourceDisplayFrame then
+                QueueRefreshBurst(true)
             end
-        end
+        end)
+        hooked = true
+    end
 
-        local classFrame
-        local prdFrame = PersonalResourceDisplayFrame
-        if IsObjectAccessible(prdFrame)
-            and IsObjectAccessible(prdFrame.classFrame)
-            and prdFrame.classFrame ~= playerFrame then
-            classFrame = prdFrame.classFrame
-        end
+    if hooked then
+        prdHooks[prdFrame] = true
+    end
+end
 
-        if currentPRDClassFrame ~= classFrame then
-            ForgetRuneFrame(currentPRDClassFrame)
-            currentPRDClassFrame = classFrame
-        end
-        if classFrame then
-            local frameData = InitializeRuneFrame(classFrame)
-            if frameData then
-                HookRuneFrame(classFrame)
-            end
+RefreshRuneVisuals = function(forcePresentation)
+    if IsInCombat() then
+        MarkCombatRefresh()
+        return
+    end
+
+    EnsureDBDefaults()
+    HookPersonalResourceDisplay()
+    DiscoverRuneFrames()
+
+    if forcePresentation then
+        for _, frameData in pairs(trackedRuneFrames) do
+            InvalidateFramePresentation(frameData)
         end
     end
 
-    local function HookPersonalResourceDisplay()
-        local prdFrame = PersonalResourceDisplayFrame
-        if not IsObjectAccessible(prdFrame) or prdHooks[prdFrame] then
-            return
+    local artType = GetCurrentArtType()
+    for frame, frameData in pairs(trackedRuneFrames) do
+        if IsObjectAccessible(frame) then
+            ApplyFramePresentation(frameData, artType)
         end
+    end
+end
 
-        local hooked = false
-        if type(prdFrame.SetupClassBar) == "function" then
-            hooksecurefunc(prdFrame, "SetupClassBar", function(updatedFrame)
-                if updatedFrame == PersonalResourceDisplayFrame then
-                    QueueRefreshBurst(true)
+local REFRESH_DELAYS = { 0.2, 1.0 }
+local refreshTimers = {}
+
+QueueRefreshBurst = function(forcePresentation)
+    refreshGeneration = refreshGeneration + 1
+    local generation = refreshGeneration
+
+    for i = 1, #REFRESH_DELAYS do
+        local timer = refreshTimers[i]
+        if timer then
+            timer:Cancel()
+            refreshTimers[i] = nil
+        end
+    end
+
+    if IsInCombat() then
+        MarkCombatRefresh()
+        return
+    end
+
+    RefreshRuneVisuals(forcePresentation)
+    if generation ~= refreshGeneration then
+        return
+    end
+
+    for i = 1, #REFRESH_DELAYS do
+        local timerIndex = i
+        refreshTimers[timerIndex] = C_Timer.NewTimer(
+            REFRESH_DELAYS[timerIndex],
+            function()
+                if generation ~= refreshGeneration then
+                    return
                 end
-            end)
-            hooked = true
-        end
-
-        if type(prdFrame.SetHideClassInfo) == "function" then
-            hooksecurefunc(prdFrame, "SetHideClassInfo", function(updatedFrame)
-                if updatedFrame == PersonalResourceDisplayFrame then
-                    QueueRefreshBurst(true)
-                end
-            end)
-            hooked = true
-        end
-
-        if hooked then
-            prdHooks[prdFrame] = true
-        end
-    end
-
-    RefreshRuneVisuals = function(forcePresentation)
-        if IsInCombat() then
-            MarkCombatRefresh()
-            return
-        end
-        EnsureDBDefaults()
-        HookPersonalResourceDisplay()
-        DiscoverRuneFrames()
-
-        if forcePresentation then
-            for _, frameData in pairs(trackedRuneFrames) do
-                InvalidateFramePresentation(frameData)
+                refreshTimers[timerIndex] = nil
+                RefreshRuneVisuals(false)
             end
-        end
-
-        local artType = GetCurrentArtType()
-        for frame, frameData in pairs(trackedRuneFrames) do
-            if IsObjectAccessible(frame) then
-                ApplyFramePresentation(frameData, artType)
-            end
-        end
+        )
     end
+end
 
-    local REFRESH_DELAYS = { 0.2, 1.0 }
-    local refreshTimers = {}
-
-    QueueRefreshBurst = function(forcePresentation)
-        refreshGeneration = refreshGeneration + 1
-        local generation = refreshGeneration
-        for i = 1, #REFRESH_DELAYS do
-            if refreshTimers[i] then
-                refreshTimers[i]:Cancel()
-                refreshTimers[i] = nil
-            end
-        end
-
-        if IsInCombat() then
-            MarkCombatRefresh()
-            return
-        end
-        RefreshRuneVisuals(forcePresentation)
-        if generation ~= refreshGeneration then
-            return
-        end
-
-        for i = 1, #REFRESH_DELAYS do
-            refreshTimers[i] = C_Timer.NewTimer(REFRESH_DELAYS[i], function()
-                if generation == refreshGeneration then
-                    refreshTimers[i] = nil
-                    RefreshRuneVisuals(false)
-                end
-            end)
-        end
-    end
-
-    API.RefreshAll = function()
-        QueueRefreshBurst(true)
-    end
+API.RefreshAll = function()
+    QueueRefreshBurst(true)
 end
 
 local EventFrame = CreateFrame("Frame")
@@ -853,11 +844,9 @@ end)
 function EventFrame:ADDON_LOADED(loadedAddon)
     if loadedAddon == ADDON_NAME then
         EnsureDBDefaults()
-        if isDeathKnight then
-            QueueRefreshBurst(true)
-        end
-    elseif isDeathKnight and (loadedAddon == "Blizzard_UnitFrame"
-        or loadedAddon == "Blizzard_PersonalResourceDisplay") then
+        QueueRefreshBurst(true)
+    elseif loadedAddon == "Blizzard_UnitFrame"
+        or loadedAddon == "Blizzard_PersonalResourceDisplay" then
         QueueRefreshBurst(true)
     end
 end
@@ -885,12 +874,10 @@ function EventFrame:PLAYER_REGEN_ENABLED()
 end
 
 EventFrame:RegisterEvent("ADDON_LOADED")
-if isDeathKnight then
-    EventFrame:RegisterEvent("PLAYER_LOGIN")
-    EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    EventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-    EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-end
+EventFrame:RegisterEvent("PLAYER_LOGIN")
+EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+EventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 SLASH_OLDRUNES1 = "/or"
 SLASH_OLDRUNES2 = "/oldrunes"
@@ -933,19 +920,6 @@ SlashCmdList["OLDRUNES"] = function(message)
         SetRuneStyle(style)
         PrintStyleSet(style)
         API.RefreshAll()
-    elseif command == "multicolor" then
-        -- Hidden compatibility alias for pre-2.0 commands.
-        local style = GetRuneStyle() == RUNE_STYLE_MIXED
-            and RUNE_STYLE_SPEC or RUNE_STYLE_MIXED
-        SetRuneStyle(style)
-        PrintStyleSet(style)
-        API.RefreshAll()
-    elseif command == "reverse" then
-        print(("%s: %s"):format(
-            GetAddonPrefix(),
-            L.MSG_REVERSE_REMOVED
-                or "Reverse recovery was removed because it taints Blizzard's managed rune layout."
-        ))
     elseif command == "config" or command == "options" then
         OpenSettings()
     else

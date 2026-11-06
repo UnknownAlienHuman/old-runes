@@ -4,17 +4,18 @@
 flowchart LR
   TOC[OldRunes.toc] --> Locale[Localization.lua]
   Locale --> Core[Core.lua]
-  Core --> Shared[Migration + commands on all classes]
-  Core -->|Death Knight only| Runtime[Exact RuneFrame runtime]
-  Options[Options.lua] --> Shared
+  Core --> Gate{Death Knight?}
+  Gate -->|No| Stop[Return without owners]
+  Gate -->|Yes| Runtime[Migration + commands + exact rune runtime]
+  Options[Options.lua] --> Gate
 
-  Events[Login / world / spec / regen / addon load] --> Burst[Generation-gated refresh burst]
-  PRD[PRD SetupClassBar + SetHideClassInfo post-hooks] --> Burst
-  Burst --> Discover[RuneFrame + PRD classFrame discovery]
+  Events[Login / world / spec / regen / addon load] --> Burst[Owned refresh generation]
+  PRD[Current PRD post-hooks] --> Burst
+  Burst --> Cancel[Cancel prior readiness timers]
+  Cancel --> Discover[RuneFrame + PRD classFrame discovery]
   Discover --> Hooks[UpdateRunes post-hooks]
-  Hooks --> Render[Classic overlay or Blizzard art]
+  Hooks --> Render[Classic overlay or restored Blizzard art]
   Render --> Cooldown[Timer / swipe / edge presentation]
 
-  DB[(OldRunesDB schema 2)] --> Shared
-  Shared --> Runtime
+  DB[(OldRunesDB schema 2)] --> Runtime
 ```

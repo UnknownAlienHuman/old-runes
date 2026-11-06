@@ -1,6 +1,6 @@
 # Old Runes
 
-Old Runes restores the classic Death Knight rune textures on the player RuneFrame and, optionally, the Personal Resource Display (PRD). Blizzard continues to own rune order, layout, cooldown timing, and state transitions.
+Old Runes restores the classic rune textures for **Death Knights** on the player RuneFrame and, optionally, the Personal Resource Display (PRD). Blizzard continues to own rune identity, order, layout, cooldown timing, and state transitions.
 
 ## Current target
 
@@ -13,10 +13,10 @@ The integration is checked against `Gethe/wow-ui-source` build `12.1.5.70688` (`
 ## Features
 
 - Spec, mixed, Death, and Blizzard specless rune styles.
-- Independent cooldown numbers and spiral controls.
-- Optional PRD styling with exact `PersonalResourceDisplayFrame.classFrame` discovery.
-- Automatic reapplication after login, world entry, specialization changes, PRD rebuilds, and combat deferral.
-- One-way migration from legacy `multicolorRunes`; obsolete reverse-layout state is removed.
+- Independent cooldown-number and cooldown-spiral controls.
+- Optional PRD styling through exact `PersonalResourceDisplayFrame.classFrame` discovery.
+- Reapplication after login, world entry, specialization changes, PRD rebuilds, and deferred combat changes.
+- One-way migration from legacy `multicolorRunes`; obsolete reverse-layout state is deleted.
 
 ## Commands
 
@@ -32,23 +32,24 @@ The integration is checked against `Gethe/wow-ui-source` build `12.1.5.70688` (`
 /or style specless       Blizzard gray rune art
 ```
 
-The legacy `/or multicolor` alias remains accepted but is intentionally omitted from help.
-
 ## Safety boundary
 
-Old Runes does not assign `layoutIndex`, call Blizzard layout methods, replace `UpdateRunes`, or force rune updates. It uses exact frame paths and post-hooks only. Creation of addon-owned overlays and Blizzard atlas visibility changes are deferred until combat ends.
+The first runtime gate exits unless the player is a Death Knight. No database migration, settings registration, slash command, frame hook, timer, or rune presentation owner is created outside that class.
+
+Old Runes does not assign `layoutIndex`, call Blizzard layout methods, replace `UpdateRunes`, or force rune updates. It discovers only the two reviewed frame paths and uses post-hooks. Overlay creation, owner replacement, Blizzard-art visibility changes, and configuration commits are deferred until combat ends.
 
 ## Validation
 
-Repository tests cover:
+Repository checks cover:
 
-- Lua source parsing;
-- non-DK configuration and SavedVariables migration;
-- player and PRD frame discovery;
-- style transitions and specialization reapplication;
+- Lua 5.1 parsing;
+- schema migration and malformed-value normalization;
+- player and PRD discovery, replacement, release, and overlay reuse;
+- all four styles and specialization reapplication;
 - PRD disable/restore behavior;
-- combat deferral;
-- duplicate-overlay prevention;
-- Settings control wiring.
+- combat deferral without partial configuration commits;
+- bounded refresh timers and stale-owner rejection;
+- Settings control wiring;
+- exact installable ZIP contents.
 
-Live-client verification remains required for the texture assets and full login/reload/combat matrix; see `todo.md` and issues #1–#2.
+Live-client verification remains required for texture assets, taint/forbidden-action behavior, and the full login/reload/combat matrix; see `todo.md` and issues #1–#2.
