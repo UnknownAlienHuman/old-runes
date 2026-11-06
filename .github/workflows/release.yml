@@ -1,32 +1,49 @@
-name: Validate Old Runes modernization
+name: Validate and release addon
 
 on:
+  pull_request:
   push:
     branches:
-      - agent/modernize-12.1.5
+      - main
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish or update the GitHub release after validation
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: old-runes-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+      archive: ${{ steps.build.outputs.archive }}
+      sha256: ${{ steps.build.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Lua 5.1
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq lua5.1
 
-      - name: Validate source, behavior, and package
+      - name: Validate and package
+        id: build
         shell: bash
         run: |
           set -euo pipefail
 
           version="$(sed -n 's/^## Version:[[:space:]]*//p' OldRunes.toc | head -n 1 | tr -d '\r')"
           interface="$(sed -n 's/^## Interface:[[:space:]]*//p' OldRunes.toc | head -n 1 | tr -d '\r')"
-          [[ "$version" == "2.2.0" ]]
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           [[ "$interface" == "120105" ]]
 
           luac5.1 -p Localization.lua Core.lua Options.lua tests/test_core.lua tests/test_options.lua
@@ -55,9 +72,13 @@ jobs:
 
           core = Path("Core.lua").read_text(encoding="utf-8")
           forbidden = (
-              r"\blayoutIndex\s*=", r":Layout\s*\(", r"UpdateRunes\s*\(\s*false",
-              r"\bGet(?:Num)?Children\b", r"DeathKnightResourceOverlayFrame",
-              r"\bprdClassFrame\b", r"C_Timer\.NewTicker",
+              r"\blayoutIndex\s*=",
+              r":Layout\s*\(",
+              r"UpdateRunes\s*\(\s*false",
+              r"\bGet(?:Num)?Children\b",
+              r"DeathKnightResourceOverlayFrame",
+              r"\bprdClassFrame\b",
+              r"C_Timer\.NewTicker",
           )
           for pattern in forbidden:
               if re.search(pattern, core):
@@ -85,7 +106,65 @@ jobs:
           mkdir -p package/OldRunes
           cp OldRunes.toc Localization.lua Core.lua Options.lua package/OldRunes/
           (cd package && zip -q -9 -r "../$archive" OldRunes)
+
           actual="$(unzip -Z1 "$archive" | sort)"
           expected="$(printf '%s\n' OldRunes/ OldRunes/OldRunes.toc OldRunes/Localization.lua OldRunes/Core.lua OldRunes/Options.lua | sort)"
           [[ "$actual" == "$expected" ]]
-          sha256sum "$archive"
+
+          digest="$(sha256sum "$archive" | cut -d' ' -f1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+          printf '### Package\n\n- `%s`\n- SHA-256: `%s`\n' "$archive" "$digest" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rebuild verified package
+        env:
+          ARCHIVE: ${{ needs.validate.outputs.archive }}
+          EXPECTED_SHA256: ${{ needs.validate.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf package "$ARCHIVE"
+          mkdir -p package/OldRunes
+          cp OldRunes.toc Localization.lua Core.lua Options.lua package/OldRunes/
+          (cd package && zip -q -9 -r "../$ARCHIVE" OldRunes)
+          actual_sha256="$(sha256sum "$ARCHIVE" | cut -d' ' -f1)"
+          [[ "$actual_sha256" == "$EXPECTED_SHA256" ]]
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          ARCHIVE: ${{ needs.validate.outputs.archive }}
+          SHA256: ${{ needs.validate.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          cat > release-notes.md <<EOF
+          ## Old Runes $VERSION
+
+          World of Warcraft Retail 12.1.5 (Interface \`120105\`).
+
+          See \`CHANGELOG.md\` for the full change list.
+
+          SHA-256: \`$SHA256\`
+          EOF
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')"
+            [[ "$tag_sha" == "$GITHUB_SHA" ]]
+            gh release upload "$tag" "$ARCHIVE" --clobber
+            gh release edit "$tag" --title "Old Runes $VERSION" --notes-file release-notes.md --latest
+          else
+            gh release create "$tag" "$ARCHIVE" --target "$GITHUB_SHA" --title "Old Runes $VERSION" --notes-file release-notes.md --latest
+          fi
