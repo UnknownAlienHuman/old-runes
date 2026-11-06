@@ -1,63 +1,54 @@
 # Old Runes
 
-Old Runes restores the classic Death Knight rune textures and lets the player choose spec-based, mixed, Death, or Blizzard specless art. Cooldown numbers, the cooldown spiral, and styling of the Personal Resource Display are configurable.
+Old Runes restores the classic Death Knight rune textures on the player RuneFrame and, optionally, the Personal Resource Display (PRD). Blizzard continues to own rune order, layout, cooldown timing, and state transitions.
 
-## Preview
+## Current target
 
-![Old Runes artwork in game](https://media.forgecdn.net/attachments/1566/212/screenshot-2026-03-05-094329-png.png)
+- World of Warcraft Retail **12.1.5**
+- TOC Interface **120105**
+- Addon version **2.2.0**
 
-Screenshot from the [CurseForge gallery](https://www.curseforge.com/wow/addons/old-runes).
+The integration is checked against `Gethe/wow-ui-source` build `12.1.5.70688` (`d07eb00237d8891f153215db98a5df880a26cfe5`) and the reviewed `12.1.5.70783` endpoint (`297d7aaaa736f346b3e036f38ee088eaf7f8c07f`). The relevant `RuneFrame` and PRD class-frame contracts are unchanged across those endpoints.
 
-## Installation
+## Features
 
-Copy the `OldRunes` directory into `World of Warcraft/_retail_/Interface/AddOns/`, then restart the client or use `/reload`.
+- Spec, mixed, Death, and Blizzard specless rune styles.
+- Independent cooldown numbers and spiral controls.
+- Optional PRD styling with exact `PersonalResourceDisplayFrame.classFrame` discovery.
+- Automatic reapplication after login, world entry, specialization changes, PRD rebuilds, and combat deferral.
+- One-way migration from legacy `multicolorRunes`; obsolete reverse-layout state is removed.
 
-## Compatibility and data
+## Commands
 
-- Game: World of Warcraft Retail / Midnight 12.1.0
-- Interface: `120100`
-- Addon version: `2.1.0`
-- Saved variables: `OldRunesDB`
-- External libraries: none
+```text
+/or                     Show help
+/or config              Open settings
+/or timer               Toggle cooldown numbers
+/or spiral              Toggle cooldown spiral
+/or prd                  Toggle PRD styling
+/or style spec           Classic runes for the current specialization
+/or style mixed          Two Blood, two Frost, two Unholy
+/or style death          Death runes in every slot
+/or style specless       Blizzard gray rune art
+```
 
-## Usage
+The legacy `/or multicolor` alias remains accepted but is intentionally omitted from help.
 
-Open the in-game Settings panel, or use `/or` / `/oldrunes`.
+## Safety boundary
 
-Supported commands:
+Old Runes does not assign `layoutIndex`, call Blizzard layout methods, replace `UpdateRunes`, or force rune updates. It uses exact frame paths and post-hooks only. Creation of addon-owned overlays and Blizzard atlas visibility changes are deferred until combat ends.
 
-- `timer` — toggle cooldown numbers;
-- `spiral` — toggle the cooldown spiral;
-- `prd` — toggle Old Runes styling on the Personal Resource Display;
-- `style spec|mixed|death|specless` — select rune art;
-- `multicolor` — legacy alias for mixed style;
-- `config` — open the Settings category.
+## Validation
 
-`reverse` is retained as a compatibility command but deliberately remains disabled. Mutating Blizzard's managed rune layout taints the PlayerFrame path in Retail.
+Repository tests cover:
 
-## 2.1.0 update
+- Lua source parsing;
+- non-DK configuration and SavedVariables migration;
+- player and PRD frame discovery;
+- style transitions and specialization reapplication;
+- PRD disable/restore behavior;
+- combat deferral;
+- duplicate-overlay prevention;
+- Settings control wiring.
 
-The 12.1 update replaces broad PRD child discovery with the two source-confirmed rune frames: `RuneFrame` and `PersonalResourceDisplayFrame.classFrame`. A post-hook on `UpdateRunes` now invalidates presentation-only caches after Blizzard reapplies specialization art, and bounded lifecycle refreshes reassert the persisted style after login, specialization changes, reloads, teleports, and world transitions.
-
-Disabling PRD styling now restores Blizzard atlas art and cooldown defaults. Frame references use weak-key state, creation of addon-owned overlays is deferred in combat, and legacy `multicolorRunes` SavedVariables migrate correctly.
-
-## Validation status
-
-Lua syntax, static safety searches, a mocked 12.1 rune/PRD regression suite, and a non-Death-Knight SavedVariables migration suite pass for version 2.1.0. An actual Retail client smoke test is still required before claiming in-game verification; see the open repository issues for the test matrix.
-
-## Published addon
-
-[CurseForge: Old Runes](https://www.curseforge.com/wow/addons/old-runes)
-
-## Developer documentation
-
-- [Architecture](ARCHITECTURE.md)
-- [Agent guide](AGENT_GUIDE.md)
-- [Code index](CODE_INDEX.md)
-- [Code graph](CODE_GRAPH.md)
-- [Changelog](CHANGELOG.md)
-- [WoW addon engineering knowledge base](https://github.com/UnknownAlienHuman/wow-addon-engineering-kb)
-
-## License
-
-Licensed under the [MIT License](LICENSE).
+Live-client verification remains required for the texture assets and full login/reload/combat matrix; see `todo.md` and issues #1–#2.

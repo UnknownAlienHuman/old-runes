@@ -1,12 +1,9 @@
-## Interface: 120100
-## Title: |cC41F3BFFOld Runes|r
-## Notes: Restores classic Death Knight rune textures with customizable options
-## Notes-ruRU: Возвращает классические текстуры рун рыцаря смерти с настраиваемыми опциями
+## Interface: 120105
+## Title: Old Runes
+## Notes: Classic Death Knight rune art with Blizzard-owned layout and cooldown timing.
 ## Author: Dakini, Neomorph
-## Version: 2.1.0
+## Version: 2.2.0
 ## SavedVariables: OldRunesDB
-## Category: Class
-## X-Category: Class
 
 Localization.lua
 Core.lua

@@ -1,41 +1,34 @@
 # Changelog
 
-## 2.1.0 — 2026-08-27
+## 2.2.0 — 2026-11-06
 
-Target: World of Warcraft Retail 12.1.0, Interface `120100`.
+### Updated
+
+- Targeted Retail 12.1.5 / Interface `120105`.
+- Rechecked `RuneFrame` and `PersonalResourceDisplayFrame.classFrame` against source builds `70688` and `70783`.
+- Kept exact frame discovery and post-hook-only integration.
 
 ### Fixed
 
-- Reapply the persisted rune style after Blizzard `UpdateRunes(true)` restores specialization art during specialization and world lifecycle changes.
-- Reassert custom atlas hiding when Blizzard presentation state is refreshed.
-- Restore Blizzard rune art, hidden countdown-number default, cooldown swipe, and cooldown edge when Personal Resource Display styling is disabled.
-- Correct migration of legacy SavedVariables where `multicolorRunes=true` existed without a modern `runeStyle` value.
-- Discover replacement player/PRD rune frames during bounded delayed lifecycle refreshes.
+- Slash commands and `/or config` now remain available on non-Death-Knight characters.
+- PRD rebuilds discover replacement class frames without retaining stale frames.
+- Delayed refreshes no longer invalidate presentation state repeatedly.
+- Cooldown settings remain addon-owned only while a frame is styled; disabling PRD styling restores Blizzard defaults.
 
-### Changed
+### Cleaned
 
-- Replace broad `ClassFrameContainer` child scanning and legacy fallback globals with the 12.1 source-confirmed `RuneFrame` and `PersonalResourceDisplayFrame.classFrame` paths.
-- Keep tracked Blizzard frames and hook guards in weak-key tables.
-- Defer creation of addon-owned rune overlays and atlas visibility changes while in combat, then reconcile on `PLAYER_REGEN_ENABLED`.
-- Coalesce lifecycle work into a bounded `0 / 0.2 / 1.0` second refresh burst with stale-generation cancellation.
-- Preserve the taint-safe prohibition on rune layout mutation and reverse recovery order.
+- Removed the nonfunctional reverse-layout setting from UI, help, defaults, and persistence.
+- Converted `multicolorRunes` to a one-way migration and removed the legacy key afterward.
+- Removed internal implementation names from user-facing tooltips.
+- Replaced the historical work-log dump with a focused live-client validation matrix.
 
-### Source baseline
+### Validation
 
-- `UnknownAlienHuman/wow-addon-engineering-kb`: Retail 12.1.0 engineering contract.
-- `Gethe/wow-ui-source@027d26c3406d3de2cbd2b1f67d468fe033a1bcd4`:
-  - `Interface/AddOns/Blizzard_UnitFrame/Mainline/RuneFrame.lua`
-  - `Interface/AddOns/Blizzard_UnitFrame/Mainline/RuneFrame.xml`
-  - `Interface/AddOns/Blizzard_PersonalResourceDisplay/Blizzard_PersonalResourceDisplay.lua`
-  - generated `PlayerScriptDocumentation.lua` for `GetRuneCooldown`.
+- Added mocked DK/non-DK runtime regression tests and Settings wiring tests.
+- Release validation runs Lua 5.1 syntax checks, tests, runtime-closure checks, forbidden-pattern checks, and package-content verification.
 
-### Verification
+## 2.1.0 — 2026-08-28
 
-Passed offline:
-
-- Lua syntax compilation of the changed `Core.lua` through `loadfile`;
-- static rejection searches for layout mutation, forced `UpdateRunes(false)`, PRD child sweeps, and removed fallback globals;
-- mocked Death Knight regression suite covering all style transitions, `UpdateRunes(true)`, PRD default restoration, replacement-frame discovery, combat deferral, and attach-once hooks;
-- mocked non-Death-Knight/SavedVariables migration suite.
-
-Not performed: an actual Retail 12.1.0 client smoke test. The open validation issues remain the release gate for live behavior and texture availability.
+- Updated for Retail 12.1.0 / Interface `120100`.
+- Added source-confirmed player RuneFrame and PRD class-frame discovery.
+- Added combat deferral, lifecycle refreshes, PRD restoration, and legacy mixed-style migration.
