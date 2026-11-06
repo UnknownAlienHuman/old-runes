@@ -236,7 +236,7 @@ local trackedRuneFrames = {}
 local frameHooks = setmetatable({}, { __mode = "k" })
 local prdHooks = setmetatable({}, { __mode = "k" })
 local runeState = setmetatable({}, { __mode = "k" })
-local runeOverlays = setmetatable({}, { __mode = "kv" })
+local runeOverlays = setmetatable({}, { __mode = "k" })
 local cooldownState = setmetatable({}, { __mode = "k" })
 
 local pendingCombatRefresh = false
@@ -385,9 +385,11 @@ local function GetRuneReady(rune)
 
     if GetRuneCooldown and rune.runeIndex then
         local _, _, ready = GetRuneCooldown(rune.runeIndex)
-        return ready == true
+        if type(ready) == "boolean" then
+            return ready
+        end
     end
-    return true
+    return nil
 end
 
 local function UpdateOverlayBrightness(rune, overlay)
@@ -396,6 +398,10 @@ local function UpdateOverlayBrightness(rune, overlay)
     end
 
     local ready = GetRuneReady(rune)
+    if type(ready) ~= "boolean" then
+        return
+    end
+
     local state = GetOrCreateRuneState(rune)
     if state.ready == ready then
         return

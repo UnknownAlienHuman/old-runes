@@ -9,11 +9,12 @@
 - Latest reviewed relevant endpoint: `297d7aaaa736f346b3e036f38ee088eaf7f8c07f` (`12.1.5.70783`)
 - Runtime matrix: not complete; see `todo.md`
 
-Read `wow-addon-engineering-kb/INDEX_MINI.md`, the 12.1.5 live/second-pass overlays, and the addon SavedVariables/TOC guides before patch-sensitive changes.
+Read `wow-addon-engineering-kb/AGENTS.md` and `INDEX_MINI.md`, then the current 12.1.5 overlays plus the task-owning SavedVariables, TOC, event/lifecycle, and UnitFrames guides before patch-sensitive changes.
 
 ## Non-negotiable invariants
 
-- Every loaded Lua file must exit before creating any addon state unless `UnitClass("player")` is `DEATHKNIGHT`.
+- Every loaded Lua file exits before creating addon runtime state unless `UnitClass("player")` is `DEATHKNIGHT`.
+- TOC persistence may still be loaded account-wide; do not claim a Lua return prevents SavedVariables loading.
 - Never assign `rune.layoutIndex`.
 - Never call `frame:Layout()` or `frame:UpdateRunes(false)`.
 - Never replace `UpdateRunes`; use a post-hook.
@@ -21,20 +22,29 @@ Read `wow-addon-engineering-kb/INDEX_MINI.md`, the 12.1.5 live/second-pass overl
 - Never create overlay regions or change Blizzard rune-art visibility in combat.
 - Keep discovery limited to `RuneFrame` and `PersonalResourceDisplayFrame.classFrame` unless selected source proves a new path.
 - Keep exactly one current player owner and one current PRD class-frame owner; release replacements instead of accumulating them.
-- Disabling PRD styling or releasing an accessible rune must restore Blizzard art and cooldown defaults.
+- Keep one stable overlay lookup per live rune; do not use a weak value that can disappear while its rune remains live.
+- Treat `GetRuneCooldown` as `MayReturnNothing`; unknown readiness preserves the current visual state.
+- Disabling PRD styling or releasing an accessible rune restores Blizzard art and cooldown defaults.
 - Cancel old readiness timers before replacement and clear each completed handle by its captured slot.
-- Do not reintroduce reverse layout, compatibility slash-command branches, or dead localization strings.
+- Do not reintroduce reverse layout, compatibility slash-command branches, non-DK runtime scenarios, or dead localization strings.
 - Do not persist frames, regions, timers, hooks, or presentation caches.
+- Release publication is manual and only from `refs/heads/main`.
 
 ## Local checks
 
 ```bash
 luac5.1 -p Localization.lua Core.lua Options.lua tests/test_core.lua tests/test_options.lua
-lua5.1 tests/test_core.lua
+
+for regression in \
+  release reuse empty combat timers stale_prd inaccessible brightness \
+  combat_mixed database cooldown_unavailable; do
+  lua5.1 tests/test_core.lua "$regression"
+done
+
 lua5.1 tests/test_options.lua
 ```
 
-`texlua` can be used for an additional parser/test pass, but the release workflow remains the Lua 5.1 gate.
+Each core regression runs in a fresh process. Do not replace this with one shared mutable test session.
 
 ## Change routing
 
@@ -46,4 +56,4 @@ lua5.1 tests/test_options.lua
 
 ## Required live checks
 
-Capture exact client build/interface and addon commit for login, reload, specialization swap, PRD hide/show/rebuild, combat transitions, all four styles, timer/spiral toggles, and coexistence with default UI plus the normal addon stack. Record Lua, taint, forbidden-action, and texture failures.
+Capture exact client build/interface and addon commit for login, reload, specialization swap, PRD hide/show and late setup, combat transitions, all four styles, timer/spiral toggles, and coexistence with default UI plus the normal addon stack. Explicitly verify initial rune readiness, classic texture resolution, taint, forbidden-action, and Lua failures.

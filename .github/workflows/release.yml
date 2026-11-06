@@ -47,21 +47,49 @@ jobs:
           [[ "$interface" == "120105" ]]
 
           luac5.1 -p Localization.lua Core.lua Options.lua tests/test_core.lua tests/test_options.lua
-          lua5.1 tests/test_core.lua
+
+          regressions=(
+            release
+            reuse
+            empty
+            combat
+            timers
+            stale_prd
+            inaccessible
+            brightness
+            combat_mixed
+            database
+            cooldown_unavailable
+          )
+          for regression in "${regressions[@]}"; do
+            lua5.1 tests/test_core.lua "$regression"
+          done
           lua5.1 tests/test_options.lua
 
           python3 - <<'PY'
           import re
           from pathlib import Path
 
+          toc_text = Path("OldRunes.toc").read_text(encoding="utf-8")
           runtime = [
               line.strip()
-              for line in Path("OldRunes.toc").read_text(encoding="utf-8").splitlines()
+              for line in toc_text.splitlines()
               if line.strip() and not line.lstrip().startswith("##")
           ]
           expected = ["Localization.lua", "Core.lua", "Options.lua"]
           if runtime != expected:
               raise SystemExit(f"unexpected TOC runtime closure: {runtime!r}")
+
+          required_metadata = (
+              "## Interface: 120105",
+              "## Version: 2.2.0",
+              "## SavedVariables: OldRunesDB",
+              "## Category: Class",
+              "## IconAtlas: UF-DKRunes-Blood-SkullActive",
+          )
+          for line in required_metadata:
+              if line not in toc_text.splitlines():
+                  raise SystemExit(f"missing TOC metadata: {line}")
 
           checked = ["OldRunes.toc", *expected, "tests/test_core.lua", "tests/test_options.lua"]
           for name in checked:
@@ -73,6 +101,44 @@ jobs:
           core = Path("Core.lua").read_text(encoding="utf-8")
           options = Path("Options.lua").read_text(encoding="utf-8")
           tests = Path("tests/test_core.lua").read_text(encoding="utf-8")
+
+          gate_prefixes = {
+              "Localization.lua": [
+                  "-- Old Runes localization",
+                  "",
+                  'local _, playerClass = UnitClass("player")',
+                  'if playerClass ~= "DEATHKNIGHT" then',
+                  "    return",
+                  "end",
+              ],
+              "Core.lua": [
+                  "-- Old Runes (Retail 12.1.5)",
+                  "-- Classic Death Knight rune art on Blizzard-owned rune frames.",
+                  "",
+                  'local ADDON_NAME = ... or "OldRunes"',
+                  'local _, playerClass = UnitClass("player")',
+                  'if playerClass ~= "DEATHKNIGHT" then',
+                  "    return",
+                  "end",
+              ],
+              "Options.lua": [
+                  "-- Old Runes Settings panel",
+                  "",
+                  'local _, playerClass = UnitClass("player")',
+                  'if playerClass ~= "DEATHKNIGHT" then',
+                  "    return",
+                  "end",
+              ],
+          }
+          sources = {
+              "Localization.lua": localization,
+              "Core.lua": core,
+              "Options.lua": options,
+          }
+          for name, prefix in gate_prefixes.items():
+              actual = sources[name].splitlines()[:len(prefix)]
+              if actual != prefix:
+                  raise SystemExit(f"{name} no longer exits at the required DK gate: {actual!r}")
 
           forbidden = (
               r"\blayoutIndex\s*=",
@@ -93,8 +159,6 @@ jobs:
                   raise SystemExit(f"forbidden runtime pattern: {pattern}")
 
           required_core = (
-              'local _, playerClass = UnitClass("player")',
-              'if playerClass ~= "DEATHKNIGHT" then',
               'classFrame = prdFrame.classFrame',
               'hooksecurefunc(frame, "UpdateRunes"',
               'PLAYER_REGEN_ENABLED',
@@ -102,29 +166,25 @@ jobs:
               'db.reverseRecoveryOrder = nil',
               'ForgetRuneFrame(currentPRDClassFrame)',
               'local timerIndex = i',
+              'local runeOverlays = setmetatable({}, { __mode = "k" })',
+              'if type(ready) == "boolean" then',
+              'if type(ready) ~= "boolean" then',
           )
           for needle in required_core:
               if needle not in core:
                   raise SystemExit(f"missing runtime invariant: {needle}")
 
-          required_localization = (
-              'local _, playerClass = UnitClass("player")',
-              'if playerClass ~= "DEATHKNIGHT" then',
-          )
-          for needle in required_localization:
-              if needle not in localization:
-                  raise SystemExit(f"missing localization class gate: {needle}")
-
-          required_options = (
-              'local _, playerClass = UnitClass("player")',
-              'if playerClass ~= "DEATHKNIGHT" then',
-          )
-          for needle in required_options:
-              if needle not in options:
-                  raise SystemExit(f"missing settings class gate: {needle}")
-
           if "non_dk" in tests:
               raise SystemExit("irrelevant non-DK runtime scenario returned")
+
+          required_regressions = (
+              '"release"', '"reuse"', '"empty"', '"combat"', '"timers"',
+              '"stale_prd"', '"inaccessible"', '"brightness"',
+              '"combat_mixed"', '"database"', '"cooldown_unavailable"',
+          )
+          for name in required_regressions:
+              if name not in tests:
+                  raise SystemExit(f"missing focused regression: {name}")
 
           surface = localization + options
           for removed in ("OPT_REVERSE", "CMD_DESC_REVERSE", "MSG_REVERSE_REMOVED", "prdClassFrame"):
@@ -159,7 +219,7 @@ jobs:
           printf '### Package\n\n- `%s`\n- SHA-256: `%s`\n' "$archive" "$digest" >> "$GITHUB_STEP_SUMMARY"
 
   publish:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main' }}
     needs: validate
     runs-on: ubuntu-latest
     permissions:
@@ -174,6 +234,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
           source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
           rm -rf package "$ARCHIVE"
           mkdir -p package/OldRunes

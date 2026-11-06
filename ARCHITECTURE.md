@@ -13,6 +13,8 @@ Old Runes is a Death Knight presentation addon. Blizzard owns rune identity, ord
 
 `Localization.lua`, `Core.lua`, and `Options.lua` return immediately unless `UnitClass("player")` resolves to `DEATHKNIGHT`. The gate precedes addon-global creation, localization tables, database migration, slash-command registration, Settings construction, events, hooks, timers, and presentation state.
 
+`OldRunesDB` is account-wide TOC persistence and may still be loaded by the client on another class. No Old Runes Lua consumer initializes or mutates it there.
+
 ## Frame ownership
 
 Only two source-confirmed paths are accepted:
@@ -22,7 +24,15 @@ RuneFrame
 PersonalResourceDisplayFrame.classFrame
 ```
 
-No child enumeration, name guessing, or fallback globals are used. The runtime owns exactly one current player frame and one current PRD class frame. Replacement, an empty/missing rune list, or PRD disablement releases accessible runes by restoring Blizzard art and cooldown defaults, hiding the custom overlay, and clearing presentation caches. Inaccessible objects are detached without invoking their methods or reading their children.
+Selected source creates the PRD class frame lazily in `SetupClassBar` and normally retains it. The addon nevertheless tolerates late creation, missing rune lists, and object replacement without scanning children or guessing names.
+
+The runtime owns exactly one current player frame and one current PRD class frame. Replacement, an empty/missing rune list, or PRD disablement releases accessible runes by restoring Blizzard art and cooldown defaults, hiding the custom overlay, and clearing presentation caches. Inaccessible objects are detached without invoking their methods or reading their children.
+
+## Overlay and cache ownership
+
+Each live rune owns at most one addon-created overlay. `runeOverlays` is a weak-key map with a strong value for the lifetime of its live rune; a GC cycle cannot discard the only addon lookup and cause another texture to be allocated. When the rune key becomes unreachable, the bookkeeping entry can be collected.
+
+Presentation caches are separate weak-key maps. No frame, rune, cooldown, texture, hook, or timer is persisted.
 
 ## Hooks and refresh lifecycle
 
@@ -35,7 +45,19 @@ No child enumeration, name guessing, or fallback globals are used. The runtime o
 
 Discovery, release, overlay creation, native-art visibility changes, and configuration commits are deferred during combat. No delayed readiness probes are scheduled by a combat request. One boolean records pending reconciliation; `PLAYER_REGEN_ENABLED` applies the newest desired state once.
 
-Already-applied classic overlays may update readiness brightness and MIXED slot texture while combat is active. Pending settings do not partially replace the last fully applied style.
+Already-applied classic overlays may update readable readiness brightness and MIXED slot texture while combat is active. Pending settings do not partially replace the last fully applied style.
+
+## Readiness boundary
+
+Blizzard normally provides `rune.lastRuneState.runeReady`. The fallback `GetRuneCooldown` contract may return nothing. Old Runes therefore has three states:
+
+```text
+ready = true   -> full brightness
+ready = false  -> dimmed
+ready = nil    -> preserve the previous/default brightness
+```
+
+Missing data is never converted into a fabricated depleted rune.
 
 ## Persistence
 
@@ -48,12 +70,16 @@ oldPersonalResourceDisplay
 runeStyle
 ```
 
-`multicolorRunes` migrates once to `runeStyle=MIXED`; `reverseRecoveryOrder` is deleted. Runtime frames, regions, hooks, timers, and caches are never persisted.
+`multicolorRunes` migrates once to `runeStyle=MIXED`; `reverseRecoveryOrder` is deleted. Type and enum validation run before runtime consumers.
 
 ## Performance
 
 - At most two candidate frames are inspected per refresh.
 - One overlay is created lazily per rune and reused across detach/reattach.
-- Weak state maps avoid turning borrowed UI objects into permanent addon owners.
 - Unchanged readiness does not rewrite vertex color.
+- Refresh timers are bounded, replaceable, generation-gated, and terminal.
 - No addon `OnUpdate`, ticker, frame-tree scan, or unbounded retry loop exists.
+
+## Release boundary
+
+Validation runs for pull requests and `main`. GitHub release publication is manual and is rejected unless the workflow was dispatched from `refs/heads/main`. The publish job rebuilds the same minimal archive and verifies its SHA-256 before creating or updating a tag-bound release.

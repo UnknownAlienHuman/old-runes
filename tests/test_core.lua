@@ -28,6 +28,8 @@ local createdFrames = {}
 local hookCount = 0
 local inCombat = false
 local specialization = 1
+local runeCooldownAvailable = true
+local runeCooldownReadyOverride
 local openedCategory
 local output = {}
 
@@ -108,6 +110,16 @@ _G.C_SpecializationInfo = {
 }
 
 _G.GetRuneCooldown = function(index)
+    if not runeCooldownAvailable then
+        return
+    end
+
+    if type(runeCooldownReadyOverride) == "boolean" then
+        return runeCooldownReadyOverride and 0 or 1,
+            runeCooldownReadyOverride and 0 or 10,
+            runeCooldownReadyOverride
+    end
+
     local rune = _G.RuneFrame and _G.RuneFrame.Runes[index]
     local ready = not rune or not rune.lastRuneState
         or rune.lastRuneState.runeReady ~= false
@@ -338,10 +350,6 @@ assertEqual(textureCount, overlaysBeforeRefresh, "refresh created duplicate over
 OldRunesUI.settingsCategoryID = 42
 SlashCmdList.OLDRUNES("config")
 assertEqual(openedCategory, 42, "settings command failed")
-
-local styleBeforeUnknown = OldRunesDB.runeStyle
-SlashCmdList.OLDRUNES("multicolor")
-assertEqual(OldRunesDB.runeStyle, styleBeforeUnknown, "removed legacy command changed state")
 
 OldRunesDB.oldPersonalResourceDisplay = false
 OldRunesUI.RefreshAll()
@@ -590,6 +598,56 @@ local regressions = {
         eventFrame.scripts.OnEvent(eventFrame, "PLAYER_REGEN_ENABLED")
         FlushTimers()
         assertEqual(rune.overlay.path, death, "pending style did not apply after combat")
+    end },
+    { "database", function()
+        OldRunesDB = "broken"
+        local db = OldRunesUI.EnsureDBDefaults()
+        assertEqual(type(db), "table", "malformed database root was not replaced")
+        assertEqual(db.schema, 2, "replacement database schema is wrong")
+        assertEqual(db.showTimerNumbers, true, "timer default is wrong")
+        assertEqual(db.showCooldownSpiral, true, "spiral default is wrong")
+        assertEqual(db.oldPersonalResourceDisplay, true, "PRD default is wrong")
+        assertEqual(db.runeStyle, "SPEC", "style default is wrong")
+
+        OldRunesDB = {
+            showTimerNumbers = false,
+            showCooldownSpiral = "broken",
+            oldPersonalResourceDisplay = 0,
+            runeStyle = "BROKEN",
+            multicolorRunes = false,
+        }
+        db = OldRunesUI.EnsureDBDefaults()
+        assertEqual(db.showTimerNumbers, false, "valid false timer setting was lost")
+        assertEqual(db.showCooldownSpiral, true, "malformed spiral setting was preserved")
+        assertEqual(db.oldPersonalResourceDisplay, true, "malformed PRD setting was preserved")
+        assertEqual(db.runeStyle, "SPEC", "invalid rune style was preserved")
+        assertEqual(OldRunesUI.SetRuneStyle("BROKEN"), false, "invalid style was accepted")
+        assertEqual(db.runeStyle, "SPEC", "invalid style changed the database")
+    end },
+    { "cooldown_unavailable", function()
+        local rune = player.Runes[1]
+        local writes = 0
+        local setColor = rune.overlay.SetVertexColor
+        rune.overlay.SetVertexColor = function(self, ...)
+            writes = writes + 1
+            setColor(self, ...)
+        end
+
+        rune.lastRuneState = nil
+        runeCooldownAvailable = false
+        local before = rune.overlay.vertex[1]
+        player:UpdateRunes(false)
+        assertEqual(writes, 0, "missing cooldown data changed brightness")
+        assertEqual(rune.overlay.vertex[1], before, "missing cooldown data fabricated depletion")
+
+        runeCooldownAvailable = true
+        runeCooldownReadyOverride = false
+        player:UpdateRunes(false)
+        assertEqual(writes, 1, "ordinary cooldown data did not update brightness")
+        assertEqual(rune.overlay.vertex[1], 0.4, "ordinary depleted state was not applied")
+
+        runeCooldownReadyOverride = nil
+        rune.overlay.SetVertexColor = setColor
     end },
 }
 
