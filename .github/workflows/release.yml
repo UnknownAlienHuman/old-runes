@@ -1,47 +1,91 @@
-name: Reconstruct source payload
+name: Validate Old Runes modernization
 
 on:
   push:
     branches:
       - agent/modernize-12.1.5
-  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  reconstruct:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Download, verify, and commit sources
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.1
+
+      - name: Validate source, behavior, and package
         shell: bash
         run: |
           set -euo pipefail
-          payload=/tmp/oldrunes-large.tar.xz
-          unpack=/tmp/oldrunes-payload
 
-          curl -fL --retry 3 --retry-all-errors \
-            'https://at.adobe.com/LF7AGM2njTME6ESy' \
-            -o "$payload"
-          echo '1d44aab49d9acfd2e136be12da11f64973e4ca87294e33c9701e8804733c8fdb  /tmp/oldrunes-large.tar.xz' | sha256sum --check -
+          version="$(sed -n 's/^## Version:[[:space:]]*//p' OldRunes.toc | head -n 1 | tr -d '\r')"
+          interface="$(sed -n 's/^## Interface:[[:space:]]*//p' OldRunes.toc | head -n 1 | tr -d '\r')"
+          [[ "$version" == "2.2.0" ]]
+          [[ "$interface" == "120105" ]]
 
-          rm -rf "$unpack"
-          mkdir -p "$unpack" tests
-          tar -xJf "$payload" -C "$unpack"
-          cp "$unpack/Core.lua" Core.lua
-          cp "$unpack/Localization.lua" Localization.lua
-          cp "$unpack/test_core.lua" tests/test_core.lua
+          luac5.1 -p Localization.lua Core.lua Options.lua tests/test_core.lua tests/test_options.lua
+          lua5.1 tests/test_core.lua non_dk
+          lua5.1 tests/test_core.lua dk
+          lua5.1 tests/test_options.lua
 
-          echo 'ea7c802bd99da9251662965814c81d2692bd9cf8924dad53befcf7024650b504  Core.lua' | sha256sum --check -
-          echo '6dc6437bab28060af2b843982ae39e55594a9f4821b6245ce89d3673b93d4da6  Localization.lua' | sha256sum --check -
-          echo '0c0c80c5ea426990af98ccb01e17529e5eca262e346608d01e7ec82018eda511  tests/test_core.lua' | sha256sum --check -
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
 
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add Core.lua Localization.lua tests/test_core.lua
-          git commit -m 'Reconstruct validated source files'
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          runtime = [
+              line.strip()
+              for line in Path("OldRunes.toc").read_text(encoding="utf-8").splitlines()
+              if line.strip() and not line.lstrip().startswith("##")
+          ]
+          expected = ["Localization.lua", "Core.lua", "Options.lua"]
+          if runtime != expected:
+              raise SystemExit(f"unexpected TOC runtime closure: {runtime!r}")
+
+          checked = ["OldRunes.toc", *expected, "tests/test_core.lua", "tests/test_options.lua"]
+          for name in checked:
+              data = Path(name).read_bytes()
+              if data.startswith(b"\xef\xbb\xbf") or b"\r\n" in data:
+                  raise SystemExit(f"invalid encoding or line endings: {name}")
+
+          core = Path("Core.lua").read_text(encoding="utf-8")
+          forbidden = (
+              r"\blayoutIndex\s*=", r":Layout\s*\(", r"UpdateRunes\s*\(\s*false",
+              r"\bGet(?:Num)?Children\b", r"DeathKnightResourceOverlayFrame",
+              r"\bprdClassFrame\b", r"C_Timer\.NewTicker",
+          )
+          for pattern in forbidden:
+              if re.search(pattern, core):
+                  raise SystemExit(f"forbidden runtime pattern: {pattern}")
+
+          required = (
+              'local classFrame = prdFrame.classFrame',
+              'hooksecurefunc(frame, "UpdateRunes"',
+              'PLAYER_REGEN_ENABLED',
+              'db.multicolorRunes = nil',
+              'db.reverseRecoveryOrder = nil',
+          )
+          for needle in required:
+              if needle not in core:
+                  raise SystemExit(f"missing runtime invariant: {needle}")
+
+          surface = Path("Localization.lua").read_text(encoding="utf-8") + Path("Options.lua").read_text(encoding="utf-8")
+          for removed in ("OPT_REVERSE", "CMD_DESC_REVERSE", "prdClassFrame"):
+              if removed in surface:
+                  raise SystemExit(f"removed user surface returned: {removed}")
+          PY
+
+          archive="OldRunes-$version.zip"
+          rm -rf package "$archive"
+          mkdir -p package/OldRunes
+          cp OldRunes.toc Localization.lua Core.lua Options.lua package/OldRunes/
+          (cd package && zip -q -9 -r "../$archive" OldRunes)
+          actual="$(unzip -Z1 "$archive" | sort)"
+          expected="$(printf '%s\n' OldRunes/ OldRunes/OldRunes.toc OldRunes/Localization.lua OldRunes/Core.lua OldRunes/Options.lua | sort)"
+          [[ "$actual" == "$expected" ]]
+          sha256sum "$archive"
