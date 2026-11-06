@@ -82,7 +82,6 @@ jobs:
 
           required_metadata = (
               "## Interface: 120105",
-              "## Version: 2.2.0",
               "## SavedVariables: OldRunesDB",
               "## Category: Class",
               "## IconAtlas: UF-DKRunes-Blood-SkullActive",
@@ -91,16 +90,32 @@ jobs:
               if line not in toc_text.splitlines():
                   raise SystemExit(f"missing TOC metadata: {line}")
 
-          checked = ["OldRunes.toc", *expected, "tests/test_core.lua", "tests/test_options.lua"]
+          checked = [
+              ".github/workflows/release.yml",
+              "OldRunes.toc",
+              *expected,
+              "tests/test_core.lua",
+              "tests/test_options.lua",
+          ]
           for name in checked:
               data = Path(name).read_bytes()
               if data.startswith(b"\xef\xbb\xbf") or b"\r\n" in data:
                   raise SystemExit(f"invalid encoding or line endings: {name}")
 
+          workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
           localization = Path("Localization.lua").read_text(encoding="utf-8")
           core = Path("Core.lua").read_text(encoding="utf-8")
           options = Path("Options.lua").read_text(encoding="utf-8")
           tests = Path("tests/test_core.lua").read_text(encoding="utf-8")
+
+          release_invariants = (
+              "github.ref == 'refs/heads/main'",
+              'gh api "repos/$GITHUB_REPOSITORY/commits/$tag"',
+              '[[ "$tag_commit_sha" == "$GITHUB_SHA" ]]',
+          )
+          for needle in release_invariants:
+              if needle not in workflow:
+                  raise SystemExit(f"missing release invariant: {needle}")
 
           gate_prefixes = {
               "Localization.lua": [
@@ -262,6 +277,14 @@ jobs:
         run: |
           set -euo pipefail
           tag="v$VERSION"
+          tag_exists=false
+
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+            tag_exists=true
+            tag_commit_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq '.sha')"
+            [[ "$tag_commit_sha" == "$GITHUB_SHA" ]]
+          fi
+
           cat > release-notes.md <<EOF
           ## Old Runes $VERSION
 
@@ -273,10 +296,10 @@ jobs:
           EOF
 
           if gh release view "$tag" >/dev/null 2>&1; then
-            tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')"
-            [[ "$tag_sha" == "$GITHUB_SHA" ]]
             gh release upload "$tag" "$ARCHIVE" --clobber
             gh release edit "$tag" --title "Old Runes $VERSION" --notes-file release-notes.md --latest
+          elif [[ "$tag_exists" == true ]]; then
+            gh release create "$tag" "$ARCHIVE" --title "Old Runes $VERSION" --notes-file release-notes.md --latest
           else
             gh release create "$tag" "$ARCHIVE" --target "$GITHUB_SHA" --title "Old Runes $VERSION" --notes-file release-notes.md --latest
           fi
