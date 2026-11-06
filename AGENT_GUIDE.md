@@ -19,6 +19,7 @@ Read `wow-addon-engineering-kb/INDEX_MINI.md`, the 12.1.5 live/second-pass overl
 - Never enumerate frame children to discover rune frames.
 - Never create overlay regions or change Blizzard rune-art visibility in combat.
 - Keep discovery limited to `RuneFrame` and `PersonalResourceDisplayFrame.classFrame` unless selected source proves a new path.
+- Keep exactly one owner for the current player frame and one for the current PRD class frame; detach replacements instead of accumulating tracked frames.
 - Disabling PRD styling must restore Blizzard art and cooldown defaults.
 - Do not reintroduce reverse layout without a source-confirmed, taint-safe public contract.
 - Do not persist frames, regions, timers, hooks, or presentation caches.

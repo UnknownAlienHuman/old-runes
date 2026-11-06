@@ -11,7 +11,7 @@
 ### Fixed
 
 - Slash commands and `/or config` now remain available on non-Death-Knight characters.
-- PRD rebuilds discover replacement class frames without retaining stale frames.
+- Player/PRD rebuilds detach replaced rune objects and class frames, hide stale overlays, and ignore stale post-hooks.
 - Delayed refreshes no longer invalidate presentation state repeatedly.
 - Cooldown settings remain addon-owned only while a frame is styled; disabling PRD styling restores Blizzard defaults.
 

@@ -158,8 +158,11 @@ local function RegisterSettings()
         panel,
         L.ADDON_NAME or "Old Runes"
     )
-    Settings.RegisterAddOnCategory(category)
+    if not category then
+        return false
+    end
 
+    Settings.RegisterAddOnCategory(category)
     API.settingsCategory = category
     if category.GetID then
         API.settingsCategoryID = category:GetID()

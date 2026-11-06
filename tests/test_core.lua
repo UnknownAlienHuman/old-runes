@@ -392,12 +392,28 @@ else
     assertEqual(player.Runes[1].overlay.path, frost, "spec-change hook did not reapply selected style")
     assertEqual(player.Runes[1].Rune_Grad.shown, false, "spec-change hook left Blizzard atlas visible")
 
+    local oldPlayerRune = player.Runes[1]
+    local replacementPlayerRune = NewRune(1)
+    local texturesBeforeRuneReplacement = textureCount
+    player.Runes[1] = replacementPlayerRune
+    player:UpdateRunes(false)
+    assertEqual(oldPlayerRune.overlay.shown, false, "replaced player rune retained its overlay")
+    assertEqual(replacementPlayerRune.overlay.path, frost, "replacement player rune was not styled")
+    assertEqual(textureCount, texturesBeforeRuneReplacement + 1, "replacement player rune created an unexpected overlay count")
+
     local replacement = NewRuneFrame()
+    local texturesBeforePRDReplacement = textureCount
     PersonalResourceDisplayFrame.classFrame = replacement
     PersonalResourceDisplayFrame:SetupClassBar()
     FlushTimers()
+    assertEqual(prd.Runes[1].overlay.shown, false, "replaced PRD retained its custom overlay")
     assertEqual(replacement.Runes[1].overlay.path, frost, "replacement PRD classFrame was not discovered")
-    assertEqual(textureCount, overlaysBeforeRefresh + 6, "replacement PRD created an unexpected overlay count")
+    assertEqual(textureCount, texturesBeforePRDReplacement + 6, "replacement PRD created an unexpected overlay count")
+
+    local texturesBeforeStaleUpdate = textureCount
+    prd:UpdateRunes(false)
+    assertEqual(textureCount, texturesBeforeStaleUpdate, "stale PRD hook recreated presentation state")
+    assertEqual(prd.Runes[1].overlay.shown, false, "stale PRD hook re-enabled its overlay")
 end
 
 io.write("PASS ", scenario, "\n")

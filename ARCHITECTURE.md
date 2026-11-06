@@ -27,7 +27,7 @@ RuneFrame
 PersonalResourceDisplayFrame.classFrame
 ```
 
-No child enumeration, name guessing, or fallback globals are used. Weak-key tables prevent replacement PRD frames from being retained for the session.
+No child enumeration, name guessing, or fallback globals are used. The runtime owns exactly one current player frame and one current PRD class frame; replacements are detached, their overlays are hidden, and their presentation caches are released.
 
 ## Hooking and lifecycle
 
@@ -57,5 +57,5 @@ runeStyle
 
 - At most two candidate frames are checked per refresh.
 - One overlay is created lazily per rune and reused.
-- Weak-key caches store presentation dirty state.
+- Exact-owner frame tracking and bounded per-rune caches store presentation dirty state; replaced frames and runes are explicitly detached.
 - No `OnUpdate`, ticker, frame-tree scan, or unbounded retry loop exists.

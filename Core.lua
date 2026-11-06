@@ -242,6 +242,8 @@ local runeState
 local cooldownState
 local pendingCombatRefresh = false
 local refreshGeneration = 0
+local currentPlayerRuneFrame
+local currentPRDClassFrame
 local RefreshRuneVisuals
 local QueueRefreshBurst
 
@@ -251,7 +253,7 @@ end
 API.RefreshAll = NoopRefresh
 
 if isDeathKnight then
-    trackedRuneFrames = setmetatable({}, { __mode = "k" })
+    trackedRuneFrames = {}
     frameHooks = setmetatable({}, { __mode = "k" })
     prdHooks = setmetatable({}, { __mode = "k" })
     runeState = setmetatable({}, { __mode = "k" })
@@ -310,6 +312,18 @@ if isDeathKnight then
         end
     end
 
+    local function ForgetRune(rune)
+        if not rune then
+            return
+        end
+
+        HideOverlayForRune(rune)
+        if rune.Cooldown then
+            cooldownState[rune.Cooldown] = nil
+        end
+        runeState[rune] = nil
+    end
+
     local function EnsureRuneOverlay(rune)
         if not IsObjectAccessible(rune) then
             return nil
@@ -333,7 +347,8 @@ if isDeathKnight then
     end
 
     local function InitializeRuneFrame(frame)
-        if not IsObjectAccessible(frame) then
+        if not IsObjectAccessible(frame)
+            or (frame ~= RuneFrame and not IsPersonalResourceFrame(frame)) then
             return nil
         end
 
@@ -345,7 +360,6 @@ if isDeathKnight then
         local frameData = trackedRuneFrames[frame]
         if not frameData then
             frameData = {
-                frame = frame,
                 runes = {},
                 count = 0,
                 isPersonal = false,
@@ -364,14 +378,14 @@ if isDeathKnight then
                 if frameData.runes[i] ~= rune then
                     local oldRune = frameData.runes[i]
                     if oldRune then
-                        HideOverlayForRune(oldRune)
+                        ForgetRune(oldRune)
                     end
                     frameData.runes[i] = rune
                 end
             else
                 local oldRune = frameData.runes[i]
                 if oldRune then
-                    HideOverlayForRune(oldRune)
+                    ForgetRune(oldRune)
                 end
                 frameData.runes[i] = nil
             end
@@ -380,13 +394,27 @@ if isDeathKnight then
         for i = newCount + 1, oldCount do
             local oldRune = frameData.runes[i]
             if oldRune then
-                HideOverlayForRune(oldRune)
+                ForgetRune(oldRune)
             end
             frameData.runes[i] = nil
         end
 
         frameData.count = newCount
         return frameData
+    end
+
+    local function ForgetRuneFrame(frame)
+        local frameData = frame and trackedRuneFrames[frame]
+        if not frameData then
+            return
+        end
+
+        for i = 1, frameData.count do
+            ForgetRune(frameData.runes[i])
+            frameData.runes[i] = nil
+        end
+        frameData.count = 0
+        trackedRuneFrames[frame] = nil
     end
 
     local function SetLayerShown(layer, shown)
@@ -635,22 +663,34 @@ if isDeathKnight then
     end
 
     local function DiscoverRuneFrames()
-        local playerFrame = RuneFrame
-        if IsObjectAccessible(playerFrame) then
+        local playerFrame = IsObjectAccessible(RuneFrame) and RuneFrame or nil
+        if currentPlayerRuneFrame ~= playerFrame then
+            ForgetRuneFrame(currentPlayerRuneFrame)
+            currentPlayerRuneFrame = playerFrame
+        end
+        if playerFrame then
             local frameData = InitializeRuneFrame(playerFrame)
             if frameData then
                 HookRuneFrame(playerFrame)
             end
         end
 
+        local classFrame
         local prdFrame = PersonalResourceDisplayFrame
-        if IsObjectAccessible(prdFrame) then
-            local classFrame = prdFrame.classFrame
-            if classFrame ~= playerFrame and IsObjectAccessible(classFrame) then
-                local frameData = InitializeRuneFrame(classFrame)
-                if frameData then
-                    HookRuneFrame(classFrame)
-                end
+        if IsObjectAccessible(prdFrame)
+            and IsObjectAccessible(prdFrame.classFrame)
+            and prdFrame.classFrame ~= playerFrame then
+            classFrame = prdFrame.classFrame
+        end
+
+        if currentPRDClassFrame ~= classFrame then
+            ForgetRuneFrame(currentPRDClassFrame)
+            currentPRDClassFrame = classFrame
+        end
+        if classFrame then
+            local frameData = InitializeRuneFrame(classFrame)
+            if frameData then
+                HookRuneFrame(classFrame)
             end
         end
     end
