@@ -1,6 +1,6 @@
 local scenario = arg[1]
 if scenario ~= "non_dk" and scenario ~= "dk" then
-    error("usage: test_core.lua non_dk|dk")
+    error("usage: test_core.lua non_dk|dk [regression]")
 end
 
 local unpackValues = table.unpack or unpack
@@ -57,11 +57,26 @@ _G.InCombatLockdown = function()
     return inCombat
 end
 
-_G.C_Timer = {
-    After = function(_, callback)
-        timerQueue[#timerQueue + 1] = callback
-    end,
-}
+local function NewTimer(_, callback)
+    local timer = { callback = callback, cancelled = false }
+    function timer:Cancel()
+        self.cancelled = true
+    end
+    timerQueue[#timerQueue + 1] = timer
+    return timer
+end
+
+_G.C_Timer = { After = NewTimer, NewTimer = NewTimer }
+
+local function PendingTimerCount()
+    local count = 0
+    for _, timer in ipairs(timerQueue) do
+        if not timer.cancelled then
+            count = count + 1
+        end
+    end
+    return count
+end
 
 local function FlushTimers()
     local iterations = 0
@@ -74,7 +89,9 @@ local function FlushTimers()
         local pending = timerQueue
         timerQueue = {}
         for i = 1, #pending do
-            pending[i]()
+            if not pending[i].cancelled then
+                pending[i].callback()
+            end
         end
     end
 end
@@ -414,6 +431,162 @@ else
     prd:UpdateRunes(false)
     assertEqual(textureCount, texturesBeforeStaleUpdate, "stale PRD hook recreated presentation state")
     assertEqual(prd.Runes[1].overlay.shown, false, "stale PRD hook re-enabled its overlay")
+
+
+    local regressions = {
+        { "release", function()
+            assertEqual(oldPlayerRune.Rune_Grad.shown, true, "released rune kept native art hidden")
+            assertEqual(oldPlayerRune.Cooldown.hideNumbers, true, "released rune kept custom timer settings")
+            assertEqual(oldPlayerRune.Cooldown.drawSwipe, true, "released rune kept custom spiral settings")
+            assertEqual(prd.Runes[1].Rune_Grad.shown, true, "released PRD kept native art hidden")
+            assertEqual(prd.Runes[1].Cooldown.hideNumbers, true, "released PRD kept custom timer settings")
+        end },
+        { "reuse", function()
+            local before = textureCount
+            collectgarbage("collect")
+            for _ = 1, 20 do
+                PersonalResourceDisplayFrame.classFrame = prd
+                PersonalResourceDisplayFrame:SetupClassBar()
+                PersonalResourceDisplayFrame.classFrame = replacement
+                PersonalResourceDisplayFrame:SetupClassBar()
+            end
+            FlushTimers()
+            assertEqual(textureCount, before, "reused PRD allocated duplicate overlays")
+            assertEqual(replacement.Runes[1].overlay.shown, true, "reused PRD did not regain styling")
+        end },
+        { "empty", function()
+            local owner = PersonalResourceDisplayFrame.classFrame
+            local runes = owner.Runes
+            local before = textureCount
+            owner.Runes = {}
+            OldRunesUI.RefreshAll()
+            FlushTimers()
+            assertEqual(runes[1].overlay.shown, false, "empty rune list retained stale overlays")
+            assertEqual(runes[1].Rune_Grad.shown, true, "empty rune list did not release native art")
+            owner.Runes = runes
+            OldRunesUI.RefreshAll()
+            FlushTimers()
+            assertEqual(textureCount, before, "repopulated rune list duplicated overlays")
+            owner.Runes = nil
+            OldRunesUI.RefreshAll()
+            FlushTimers()
+            assertEqual(runes[1].overlay.shown, false, "missing rune list retained stale overlays")
+            owner.Runes = runes
+            OldRunesUI.RefreshAll()
+            FlushTimers()
+        end },
+        { "combat", function()
+            local owner = PersonalResourceDisplayFrame.classFrame
+            local before = textureCount
+            local oldRune = player.Runes[1]
+            local numbers = oldRune.Cooldown.hideNumbers
+            inCombat = true
+            SlashCmdList.OLDRUNES("timer")
+            assertEqual(oldRune.Cooldown.hideNumbers, numbers, "settings mutated native cooldown in combat")
+            local newOwner = NewRuneFrame()
+            PersonalResourceDisplayFrame.classFrame = newOwner
+            PersonalResourceDisplayFrame:SetupClassBar()
+            assertEqual(owner.Runes[1].overlay.shown, true, "PRD replacement hid old overlay in combat")
+            assertEqual(textureCount, before, "PRD replacement allocated textures in combat")
+            oldRune.lastRuneState.runeReady = false
+            player:UpdateRunes(false)
+            assertEqual(oldRune.overlay.vertex[1], 0.4, "combat ready-state update was lost")
+            player.Runes[1] = NewRune(1)
+            player:UpdateRunes(false)
+            assertEqual(oldRune.overlay.shown, true, "rune replacement released presentation in combat")
+            assertEqual(textureCount, before, "rune replacement allocated an overlay in combat")
+            assertEqual(PendingTimerCount(), 0, "combat refresh scheduled readiness retries")
+            inCombat = false
+            eventFrame.scripts.OnEvent(eventFrame, "PLAYER_REGEN_ENABLED")
+            FlushTimers()
+            assertEqual(oldRune.overlay.shown, false, "post-combat cleanup missed replaced rune")
+            assertEqual(oldRune.Rune_Grad.shown, true, "post-combat cleanup did not restore native art")
+            assertEqual(newOwner.Runes[1].overlay.shown, true, "post-combat PRD was not discovered")
+            assertEqual(player.Runes[1].Cooldown.hideNumbers, not OldRunesDB.showTimerNumbers,
+                "post-combat refresh lost the desired setting")
+        end },
+        { "timers", function()
+            FlushTimers()
+            for _ = 1, 100 do
+                OldRunesUI.RefreshAll()
+            end
+            assertEqual(PendingTimerCount(), 2, "refresh burst accumulated live timers")
+            local stale = timerQueue[#timerQueue]
+            OldRunesUI.RefreshAll()
+            stale.callback() -- A cancelled old generation must not consume a new handle.
+            assertEqual(PendingTimerCount(), 2, "stale callback interfered with current timers")
+            FlushTimers()
+            assertEqual(PendingTimerCount(), 0, "readiness timers did not terminate")
+        end },
+        { "stale_prd", function()
+            local oldOwner = PersonalResourceDisplayFrame
+            PersonalResourceDisplayFrame = {
+                classFrame = NewRuneFrame(),
+                SetupClassBar = function() end,
+                SetHideClassInfo = function() end,
+            }
+            OldRunesUI.RefreshAll()
+            FlushTimers()
+            oldOwner:SetupClassBar()
+            oldOwner:SetHideClassInfo()
+            assertEqual(PendingTimerCount(), 0, "retired PRD owner scheduled work")
+        end },
+        { "inaccessible", function()
+            local rune = player.Runes[1]
+            rune.IsForbidden = function() return true end
+            local hide = rune.overlay.Hide
+            rune.overlay.Hide = function() fail("release touched an inaccessible rune overlay") end
+            player.Runes[1] = NewRune(1)
+            player:UpdateRunes(false)
+            rune.overlay.Hide = hide
+            rune.IsForbidden = nil
+            assertEqual(player.Runes[1].overlay.shown, true, "accessible replacement was not styled")
+        end },
+        { "brightness", function()
+            local rune = player.Runes[1]
+            local writes = 0
+            local setColor = rune.overlay.SetVertexColor
+            rune.overlay.SetVertexColor = function(self, ...)
+                writes = writes + 1
+                setColor(self, ...)
+            end
+            for _ = 1, 50 do
+                player:UpdateRunes(false)
+            end
+            assertEqual(writes, 0, "unchanged readiness rewrote overlay brightness")
+            rune.lastRuneState.runeReady = not rune.lastRuneState.runeReady
+            player:UpdateRunes(false)
+            assertEqual(writes, 1, "readiness transition did not update brightness once")
+            rune.overlay.SetVertexColor = setColor
+        end },
+        { "combat_mixed", function()
+            OldRunesUI.SetRuneStyle("MIXED")
+            OldRunesUI.RefreshAll()
+            FlushTimers()
+            local rune = player.Runes[1]
+            inCombat = true
+            rune.layoutIndex = 6 -- Simulate a native layout change, not addon ownership.
+            player:UpdateRunes(false)
+            assertEqual(rune.overlay.path, unholy, "mixed art stopped following native slots in combat")
+            OldRunesUI.SetRuneStyle("DEATH")
+            OldRunesUI.RefreshAll()
+            rune.layoutIndex = 3
+            player:UpdateRunes(false)
+            assertEqual(rune.overlay.path, frost, "pending style interrupted the applied combat style")
+            inCombat = false
+            eventFrame.scripts.OnEvent(eventFrame, "PLAYER_REGEN_ENABLED")
+            FlushTimers()
+            assertEqual(rune.overlay.path, death, "pending style did not apply after combat")
+        end },
+    }
+
+    for _, regression in ipairs(regressions) do
+        if not arg[2] or arg[2] == regression[1] then
+            regression[2]()
+            FlushTimers()
+            io.write("PASS ", regression[1], "\n")
+        end
+    end
 end
 
 io.write("PASS ", scenario, "\n")

@@ -27,18 +27,18 @@ RuneFrame
 PersonalResourceDisplayFrame.classFrame
 ```
 
-No child enumeration, name guessing, or fallback globals are used. The runtime owns exactly one current player frame and one current PRD class frame; replacements are detached, their overlays are hidden, and their presentation caches are released.
+No child enumeration, name guessing, or fallback globals are used. The runtime owns exactly one current player frame and one current PRD class frame; replacements and empty rune lists release their presentation outside combat: restore accessible Blizzard art/cooldown defaults, hide the overlay, and clear dirty-state caches. Inaccessible runes are detached without touching their methods or children.
 
 ## Hooking and lifecycle
 
 - `RuneFrame:UpdateRunes` is post-hooked; it is never replaced or called by the addon.
-- PRD `SetupClassBar` and `SetHideClassInfo` are post-hooked to rediscover class-frame replacement/visibility changes.
+- PRD `SetupClassBar` and `SetHideClassInfo` are post-hooked to rediscover class-frame replacement/visibility changes. Hooks from a retired PRD owner do nothing.
 - Login, world entry, specialization changes, relevant Blizzard addon loads, and `PLAYER_REGEN_ENABLED` feed one generation-gated refresh burst.
-- The immediate pass owns invalidation; delayed passes only discover late-created frames and reconcile presentation.
+- The immediate pass owns invalidation; delayed passes only discover late-created frames and reconcile presentation. A new burst cancels previous timer handles; at most two readiness timers are live. Generation checks also reject stale callbacks.
 
 ## Combat boundary
 
-Overlay creation and Blizzard atlas visibility changes are deferred during combat. One boolean records pending structural work; `PLAYER_REGEN_ENABLED` performs the newest desired state once. Existing addon-owned overlays may update their texture/brightness when no Blizzard visibility mutation is required.
+Discovery, release, native presentation changes, and configuration commits are deferred during combat. No readiness burst is scheduled from a combat refresh. One boolean records pending work; `PLAYER_REGEN_ENABLED` reconciles the current owners and latest desired configuration. Existing overlays keep updating readiness and MIXED slot colors using the last applied style; pending settings cannot partially change that style.
 
 ## Persistence
 
@@ -56,6 +56,7 @@ runeStyle
 ## Performance
 
 - At most two candidate frames are checked per refresh.
-- One overlay is created lazily per rune and reused.
+- One overlay is created lazily per rune and reused even across detach/reattach. A weak-key/weak-value texture map avoids retaining the owner through its texture in Lua 5.1; the native parent retains the region.
+- Unchanged rune readiness does not rewrite the overlay vertex color.
 - Exact-owner frame tracking and bounded per-rune caches store presentation dirty state; replaced frames and runes are explicitly detached.
 - No `OnUpdate`, ticker, frame-tree scan, or unbounded retry loop exists.

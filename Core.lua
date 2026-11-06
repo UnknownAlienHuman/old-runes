@@ -239,6 +239,7 @@ local trackedRuneFrames
 local frameHooks
 local prdHooks
 local runeState
+local runeOverlays
 local cooldownState
 local pendingCombatRefresh = false
 local refreshGeneration = 0
@@ -257,6 +258,9 @@ if isDeathKnight then
     frameHooks = setmetatable({}, { __mode = "k" })
     prdHooks = setmetatable({}, { __mode = "k" })
     runeState = setmetatable({}, { __mode = "k" })
+    -- Native runes retain their textures. Weak values avoid retaining the rune
+    -- through its texture's parent in Lua 5.1; recycled runes reuse that texture.
+    runeOverlays = setmetatable({}, { __mode = "kv" })
     cooldownState = setmetatable({}, { __mode = "k" })
 
     local function MarkCombatRefresh()
@@ -283,7 +287,7 @@ if isDeathKnight then
 
     local function IsPersonalResourceFrame(frame)
         local prdFrame = PersonalResourceDisplayFrame
-        return prdFrame ~= nil and frame == prdFrame.classFrame
+        return IsObjectAccessible(prdFrame) and frame == prdFrame.classFrame
     end
 
     local function IsFrameEnabled(frameData)
@@ -304,34 +308,16 @@ if isDeathKnight then
         return SPEC_TO_RUNE[GetCurrentSpecIndex()]
     end
 
-    local function HideOverlayForRune(rune)
-        local state = runeState[rune]
-        local overlay = state and state.overlay
-        if overlay and overlay:IsShown() then
-            overlay:Hide()
-        end
-    end
-
-    local function ForgetRune(rune)
-        if not rune then
-            return
-        end
-
-        HideOverlayForRune(rune)
-        if rune.Cooldown then
-            cooldownState[rune.Cooldown] = nil
-        end
-        runeState[rune] = nil
-    end
+    local ReleaseRune
 
     local function EnsureRuneOverlay(rune)
         if not IsObjectAccessible(rune) then
             return nil
         end
 
-        local state = GetOrCreateRuneState(rune)
-        if state.overlay then
-            return state.overlay
+        local existing = runeOverlays[rune]
+        if existing then
+            return existing
         end
 
         if IsInCombat() then
@@ -342,7 +328,7 @@ if isDeathKnight then
         local overlay = rune:CreateTexture(nil, "ARTWORK", nil, 4)
         overlay:SetAllPoints(rune)
         overlay:Hide()
-        state.overlay = overlay
+        runeOverlays[rune] = overlay
         return overlay
     end
 
@@ -353,12 +339,12 @@ if isDeathKnight then
         end
 
         local sourceRunes = frame.Runes
-        if type(sourceRunes) ~= "table" or #sourceRunes == 0 then
-            return nil
-        end
-
+        local newCount = type(sourceRunes) == "table" and #sourceRunes or 0
         local frameData = trackedRuneFrames[frame]
         if not frameData then
+            if newCount == 0 then
+                return nil
+            end
             frameData = {
                 runes = {},
                 count = 0,
@@ -370,7 +356,6 @@ if isDeathKnight then
         frameData.isPersonal = IsPersonalResourceFrame(frame)
 
         local oldCount = frameData.count
-        local newCount = #sourceRunes
 
         for i = 1, newCount do
             local rune = sourceRunes[i]
@@ -378,14 +363,14 @@ if isDeathKnight then
                 if frameData.runes[i] ~= rune then
                     local oldRune = frameData.runes[i]
                     if oldRune then
-                        ForgetRune(oldRune)
+                        ReleaseRune(oldRune)
                     end
                     frameData.runes[i] = rune
                 end
             else
                 local oldRune = frameData.runes[i]
                 if oldRune then
-                    ForgetRune(oldRune)
+                    ReleaseRune(oldRune)
                 end
                 frameData.runes[i] = nil
             end
@@ -394,12 +379,16 @@ if isDeathKnight then
         for i = newCount + 1, oldCount do
             local oldRune = frameData.runes[i]
             if oldRune then
-                ForgetRune(oldRune)
+                ReleaseRune(oldRune)
             end
             frameData.runes[i] = nil
         end
 
         frameData.count = newCount
+        if newCount == 0 then
+            trackedRuneFrames[frame] = nil
+            return nil
+        end
         return frameData
     end
 
@@ -410,7 +399,7 @@ if isDeathKnight then
         end
 
         for i = 1, frameData.count do
-            ForgetRune(frameData.runes[i])
+            ReleaseRune(frameData.runes[i])
             frameData.runes[i] = nil
         end
         frameData.count = 0
@@ -498,11 +487,17 @@ if isDeathKnight then
             return
         end
 
-        if GetRuneReady(rune) then
+        local ready = GetRuneReady(rune)
+        local state = GetOrCreateRuneState(rune)
+        if state.ready == ready then
+            return
+        end
+        if ready then
             overlay:SetVertexColor(1, 1, 1)
         else
             overlay:SetVertexColor(0.4, 0.4, 0.4)
         end
+        state.ready = ready
     end
 
     local function ApplyBlizzardArt(rune, specIndex, artToken)
@@ -525,12 +520,51 @@ if isDeathKnight then
             return false
         end
 
-        local overlay = state.overlay
+        local overlay = runeOverlays[rune]
         if overlay and overlay:IsShown() then
             overlay:Hide()
         end
         state.texturePath = nil
         return true
+    end
+
+    local function ApplyCooldownPresentation(cooldown, hideNumbers, showSpiral)
+        if not IsObjectAccessible(cooldown) then
+            return
+        end
+
+        local state = GetOrCreateCooldownState(cooldown)
+        if state.hideNumbers ~= hideNumbers then
+            cooldown:SetHideCountdownNumbers(hideNumbers)
+            state.hideNumbers = hideNumbers
+        end
+        if state.drawSwipe ~= showSpiral then
+            cooldown:SetDrawSwipe(showSpiral)
+            state.drawSwipe = showSpiral
+        end
+        if state.drawEdge ~= showSpiral then
+            cooldown:SetDrawEdge(showSpiral)
+            state.drawEdge = showSpiral
+        end
+    end
+
+    ReleaseRune = function(rune)
+        if not rune or not runeState[rune] then
+            return
+        end
+
+        -- Called only by out-of-combat reconciliation. Inaccessible objects
+        -- must be detached without calling their methods or reading children.
+        if IsObjectAccessible(rune) then
+            local specIndex = GetCurrentSpecIndex()
+            ApplyBlizzardArt(rune, specIndex, "BLIZZARD:" .. tostring(specIndex or "DEFAULT"))
+            local cooldown = rune.Cooldown
+            ApplyCooldownPresentation(cooldown, true, true)
+            if cooldown then
+                cooldownState[cooldown] = nil
+            end
+        end
+        runeState[rune] = nil
     end
 
     local function ApplyClassicArt(rune, texturePath)
@@ -577,6 +611,8 @@ if isDeathKnight then
         local enabled = IsFrameEnabled(frameData)
         local style = GetRuneStyle()
         local specIndex = GetCurrentSpecIndex()
+        frameData.style = style
+        frameData.artType = artType
 
         for i = 1, frameData.count do
             local rune = frameData.runes[i]
@@ -613,24 +649,7 @@ if isDeathKnight then
         for i = 1, frameData.count do
             local rune = frameData.runes[i]
             local cooldown = rune and rune.Cooldown
-            if cooldown and IsObjectAccessible(cooldown) then
-                local state = GetOrCreateCooldownState(cooldown)
-
-                if state.hideNumbers ~= hideNumbers then
-                    cooldown:SetHideCountdownNumbers(hideNumbers)
-                    state.hideNumbers = hideNumbers
-                end
-
-                if state.drawSwipe ~= showSpiral then
-                    cooldown:SetDrawSwipe(showSpiral)
-                    state.drawSwipe = showSpiral
-                end
-
-                if state.drawEdge ~= showSpiral then
-                    cooldown:SetDrawEdge(showSpiral)
-                    state.drawEdge = showSpiral
-                end
-            end
+            ApplyCooldownPresentation(cooldown, hideNumbers, showSpiral)
         end
     end
 
@@ -642,12 +661,50 @@ if isDeathKnight then
         SetCooldownPresentation(frameData)
     end
 
+    local function UpdateActiveOverlays(frame, frameData)
+        if not frameData or type(frame.Runes) ~= "table" then
+            return
+        end
+
+        for i = 1, frameData.count do
+            local rune = frameData.runes[i]
+            if rune and frame.Runes[i] == rune and IsObjectAccessible(rune) then
+                local state = runeState[rune]
+                local overlay = runeOverlays[rune]
+                if state and state.artToken == "CLASSIC" and overlay and overlay:IsShown() then
+                    -- Keep the applied style until the pending configuration can
+                    -- be committed. MIXED still follows Blizzard's slot order.
+                    local path = GetTextureForRune(rune, i, frameData.artType, frameData.style)
+                    if path and state.texturePath ~= path then
+                        overlay:SetTexture(path)
+                        state.texturePath = path
+                    end
+                    UpdateOverlayBrightness(rune, overlay)
+                end
+            end
+        end
+    end
+
     local function HookRuneFrame(frame)
         if frameHooks[frame] or type(frame.UpdateRunes) ~= "function" then
             return
         end
 
         hooksecurefunc(frame, "UpdateRunes", function(updatedFrame, isSpecChange)
+            if not IsObjectAccessible(updatedFrame)
+                or (updatedFrame ~= RuneFrame and not IsPersonalResourceFrame(updatedFrame)) then
+                return
+            end
+            if IsInCombat() then
+                MarkCombatRefresh()
+                UpdateActiveOverlays(updatedFrame, trackedRuneFrames[updatedFrame])
+                return
+            end
+            if updatedFrame ~= currentPlayerRuneFrame and updatedFrame ~= currentPRDClassFrame then
+                RefreshRuneVisuals(false)
+                return
+            end
+
             local frameData = InitializeRuneFrame(updatedFrame)
             if not frameData then
                 return
@@ -703,15 +760,19 @@ if isDeathKnight then
 
         local hooked = false
         if type(prdFrame.SetupClassBar) == "function" then
-            hooksecurefunc(prdFrame, "SetupClassBar", function()
-                QueueRefreshBurst(true)
+            hooksecurefunc(prdFrame, "SetupClassBar", function(updatedFrame)
+                if updatedFrame == PersonalResourceDisplayFrame then
+                    QueueRefreshBurst(true)
+                end
             end)
             hooked = true
         end
 
         if type(prdFrame.SetHideClassInfo) == "function" then
-            hooksecurefunc(prdFrame, "SetHideClassInfo", function()
-                QueueRefreshBurst(true)
+            hooksecurefunc(prdFrame, "SetHideClassInfo", function(updatedFrame)
+                if updatedFrame == PersonalResourceDisplayFrame then
+                    QueueRefreshBurst(true)
+                end
             end)
             hooked = true
         end
@@ -722,6 +783,10 @@ if isDeathKnight then
     end
 
     RefreshRuneVisuals = function(forcePresentation)
+        if IsInCombat() then
+            MarkCombatRefresh()
+            return
+        end
         EnsureDBDefaults()
         HookPersonalResourceDisplay()
         DiscoverRuneFrames()
@@ -741,16 +806,31 @@ if isDeathKnight then
     end
 
     local REFRESH_DELAYS = { 0.2, 1.0 }
+    local refreshTimers = {}
 
     QueueRefreshBurst = function(forcePresentation)
         refreshGeneration = refreshGeneration + 1
         local generation = refreshGeneration
+        for i = 1, #REFRESH_DELAYS do
+            if refreshTimers[i] then
+                refreshTimers[i]:Cancel()
+                refreshTimers[i] = nil
+            end
+        end
 
+        if IsInCombat() then
+            MarkCombatRefresh()
+            return
+        end
         RefreshRuneVisuals(forcePresentation)
+        if generation ~= refreshGeneration then
+            return
+        end
 
         for i = 1, #REFRESH_DELAYS do
-            C_Timer.After(REFRESH_DELAYS[i], function()
+            refreshTimers[i] = C_Timer.NewTimer(REFRESH_DELAYS[i], function()
                 if generation == refreshGeneration then
+                    refreshTimers[i] = nil
                     RefreshRuneVisuals(false)
                 end
             end)

@@ -12,7 +12,11 @@
 
 - Slash commands and `/or config` now remain available on non-Death-Knight characters.
 - Player/PRD rebuilds detach replaced rune objects and class frames, hide stale overlays, and ignore stale post-hooks.
-- Delayed refreshes no longer invalidate presentation state repeatedly.
+- Delayed refreshes no longer invalidate presentation state repeatedly; replacement bursts cancel old handles instead of accumulating timers.
+- Released/rebuilt/empty rune sets restore accessible native art and cooldown defaults; recycled runes reuse their existing overlays.
+- Combat configuration changes and owner replacement are deferred together, while current readiness and MIXED slot colors keep updating.
+- Retired PRD hooks and inaccessible rune cleanup no longer mutate presentation or schedule work.
+- Unchanged readiness no longer rewrites overlay brightness.
 - Cooldown settings remain addon-owned only while a frame is styled; disabling PRD styling restores Blizzard defaults.
 
 ### Cleaned
@@ -25,6 +29,7 @@
 ### Validation
 
 - Added mocked DK/non-DK runtime regression tests and Settings wiring tests.
+- Added nine regressions for release, reuse, empty/missing rune lists, combat reconciliation, bounded timers, stale owners, inaccessible objects, brightness caching, and deferred MIXED style changes. These mocks do not replace live-client taint/visual checks.
 - Release validation runs Lua 5.1 syntax checks, tests, runtime-closure checks, forbidden-pattern checks, and package-content verification.
 
 ## 2.1.0 — 2026-08-28
