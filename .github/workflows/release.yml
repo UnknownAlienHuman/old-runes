@@ -113,6 +113,8 @@ jobs:
               "github.ref == 'refs/heads/main'",
               'gh api "repos/$GITHUB_REPOSITORY/commits/$tag"',
               '[[ "$tag_commit_sha" == "$GITHUB_SHA" ]]',
+              "package.extractall(extract_root)",
+              "source.read_bytes() != installed.read_bytes()",
           )
           for needle in release_invariants:
               if needle not in workflow:
@@ -214,7 +216,7 @@ jobs:
 
           archive="OldRunes-$version.zip"
           source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
-          rm -rf package "$archive"
+          rm -rf package extracted "$archive"
           mkdir -p package/OldRunes
           cp OldRunes.toc Localization.lua Core.lua Options.lua package/OldRunes/
           find package -exec touch -d "@$source_date_epoch" {} +
@@ -228,9 +230,69 @@ jobs:
               OldRunes/Options.lua
           )
 
-          actual="$(unzip -Z1 "$archive" | sort)"
-          expected="$(printf '%s\n' OldRunes/ OldRunes/OldRunes.toc OldRunes/Localization.lua OldRunes/Core.lua OldRunes/Options.lua | sort)"
-          [[ "$actual" == "$expected" ]]
+          python3 - "$archive" <<'PY'
+          import shutil
+          import stat
+          import sys
+          import zipfile
+          from pathlib import Path, PurePosixPath
+
+          archive = Path(sys.argv[1])
+          expected = [
+              "OldRunes/",
+              "OldRunes/OldRunes.toc",
+              "OldRunes/Localization.lua",
+              "OldRunes/Core.lua",
+              "OldRunes/Options.lua",
+          ]
+
+          extract_root = Path("extracted")
+          shutil.rmtree(extract_root, ignore_errors=True)
+          extract_root.mkdir()
+
+          with zipfile.ZipFile(archive) as package:
+              infos = package.infolist()
+              names = [info.filename for info in infos]
+              if names != expected:
+                  raise SystemExit(f"unexpected archive entries/order: {names!r}")
+              if len(names) != len(set(names)):
+                  raise SystemExit("duplicate archive entry")
+
+              for info in infos:
+                  path = PurePosixPath(info.filename)
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit(f"unsafe archive path: {info.filename}")
+                  mode = (info.external_attr >> 16) & 0xFFFF
+                  if stat.S_ISLNK(mode):
+                      raise SystemExit(f"unexpected archive symlink: {info.filename}")
+
+              package.extractall(extract_root)
+
+          installed_root = extract_root / "OldRunes"
+          if not installed_root.is_dir():
+              raise SystemExit("missing extracted OldRunes directory")
+
+          source_files = [
+              Path("OldRunes.toc"),
+              Path("Localization.lua"),
+              Path("Core.lua"),
+              Path("Options.lua"),
+          ]
+          for source in source_files:
+              installed = installed_root / source.name
+              if not installed.is_file():
+                  raise SystemExit(f"missing extracted file: {installed}")
+              if source.read_bytes() != installed.read_bytes():
+                  raise SystemExit(f"source/package mismatch: {source}")
+
+          actual = sorted(
+              str(path.relative_to(extract_root)).replace("\\", "/")
+              for path in extract_root.rglob("*")
+          )
+          expected_tree = sorted(name.rstrip("/") for name in expected)
+          if actual != expected_tree:
+              raise SystemExit(f"unexpected extracted tree: {actual!r}")
+          PY
 
           digest="$(sha256sum "$archive" | cut -d' ' -f1)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
