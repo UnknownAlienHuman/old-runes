@@ -102,10 +102,20 @@ jobs:
           PY
 
           archive="OldRunes-$version.zip"
+          source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
           rm -rf package "$archive"
           mkdir -p package/OldRunes
           cp OldRunes.toc Localization.lua Core.lua Options.lua package/OldRunes/
-          (cd package && zip -q -9 -r "../$archive" OldRunes)
+          find package -exec touch -d "@$source_date_epoch" {} +
+          (
+            cd package
+            TZ=UTC zip -q -X -9 "../$archive" \
+              OldRunes/ \
+              OldRunes/OldRunes.toc \
+              OldRunes/Localization.lua \
+              OldRunes/Core.lua \
+              OldRunes/Options.lua
+          )
 
           actual="$(unzip -Z1 "$archive" | sort)"
           expected="$(printf '%s\n' OldRunes/ OldRunes/OldRunes.toc OldRunes/Localization.lua OldRunes/Core.lua OldRunes/Options.lua | sort)"
@@ -133,10 +143,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
           rm -rf package "$ARCHIVE"
           mkdir -p package/OldRunes
           cp OldRunes.toc Localization.lua Core.lua Options.lua package/OldRunes/
-          (cd package && zip -q -9 -r "../$ARCHIVE" OldRunes)
+          find package -exec touch -d "@$source_date_epoch" {} +
+          (
+            cd package
+            TZ=UTC zip -q -X -9 "../$ARCHIVE" \
+              OldRunes/ \
+              OldRunes/OldRunes.toc \
+              OldRunes/Localization.lua \
+              OldRunes/Core.lua \
+              OldRunes/Options.lua
+          )
           actual_sha256="$(sha256sum "$ARCHIVE" | cut -d' ' -f1)"
           [[ "$actual_sha256" == "$EXPECTED_SHA256" ]]
 
