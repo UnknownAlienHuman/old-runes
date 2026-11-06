@@ -1,6 +1,9 @@
 name: Reconstruct source payload
 
 on:
+  push:
+    branches:
+      - agent/modernize-12.1.5
   workflow_dispatch:
 
 permissions:
