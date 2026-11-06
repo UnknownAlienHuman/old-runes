@@ -236,8 +236,15 @@ local trackedRuneFrames = {}
 local frameHooks = setmetatable({}, { __mode = "k" })
 local prdHooks = setmetatable({}, { __mode = "k" })
 local runeState = setmetatable({}, { __mode = "k" })
-local runeOverlays = setmetatable({}, { __mode = "k" })
 local cooldownState = setmetatable({}, { __mode = "k" })
+
+-- Lua 5.1 weak-key tables are not ephemerons. A texture can reference its
+-- parent rune, so keep overlay ownership explicit and bound retired entries.
+local runeOverlays = {}
+local retiredOverlayTokens = {}
+local retiredOverlayQueue = {}
+local retiredOverlaySequence = 0
+local MAX_RETIRED_RUNE_OVERLAYS = 12
 
 local pendingCombatRefresh = false
 local refreshGeneration = 0
@@ -292,12 +299,40 @@ local function GetCurrentArtType()
     return SPEC_TO_RUNE[GetCurrentSpecIndex()]
 end
 
+local function ClaimRuneOverlay(rune)
+    retiredOverlayTokens[rune] = nil
+    return runeOverlays[rune]
+end
+
+local function RetireRuneOverlay(rune)
+    if not runeOverlays[rune] or retiredOverlayTokens[rune] then
+        return
+    end
+
+    retiredOverlaySequence = retiredOverlaySequence + 1
+    local token = retiredOverlaySequence
+    retiredOverlayTokens[rune] = token
+    retiredOverlayQueue[#retiredOverlayQueue + 1] = {
+        rune = rune,
+        token = token,
+    }
+
+    while #retiredOverlayQueue > MAX_RETIRED_RUNE_OVERLAYS do
+        local retired = table.remove(retiredOverlayQueue, 1)
+        local retiredRune = retired.rune
+        if retiredOverlayTokens[retiredRune] == retired.token then
+            retiredOverlayTokens[retiredRune] = nil
+            runeOverlays[retiredRune] = nil
+        end
+    end
+end
+
 local function EnsureRuneOverlay(rune)
     if not IsObjectAccessible(rune) then
         return nil
     end
 
-    local overlay = runeOverlays[rune]
+    local overlay = ClaimRuneOverlay(rune)
     if overlay then
         return overlay
     end
@@ -502,6 +537,7 @@ ReleaseRune = function(rune)
     end
 
     runeState[rune] = nil
+    RetireRuneOverlay(rune)
 end
 
 local function InitializeRuneFrame(frame)

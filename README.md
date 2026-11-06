@@ -45,11 +45,11 @@ Each loaded Lua file exits immediately unless `UnitClass("player")` resolves to 
 
 Old Runes never assigns `layoutIndex`, calls Blizzard layout/update methods, replaces `UpdateRunes`, or scans frame children. It discovers only `RuneFrame` and `PersonalResourceDisplayFrame.classFrame` and uses post-hooks. Overlay creation, owner replacement, Blizzard-art visibility changes, and configuration commits are deferred until combat ends.
 
-When rune readiness is temporarily unavailable, the existing visual state is preserved instead of inventing a depleted rune. Addon-created overlays are retained in one weak-key owner map so a live rune cannot accumulate duplicate textures.
+When rune readiness is temporarily unavailable, the existing visual state is preserved instead of inventing a depleted rune. Active runes retain one stable overlay; released overlays enter an explicit cache bounded to 12 runes, avoiding both duplicate textures and Lua 5.1 weak-key retention cycles.
 
 ## Validation
 
-Automated checks cover Lua 5.1 parsing, schema repair, exact frame ownership, all four styles, specialization changes, PRD release/reuse, combat deferral, stale owners, bounded timers, inaccessible objects, unavailable cooldown data, Settings wiring, release safety, and exact ZIP contents. Every core regression runs in a fresh Lua process.
+Automated checks cover Lua 5.1 parsing, schema repair, exact frame ownership, all four styles, specialization changes, PRD release/reuse, bounded overlay retirement, combat deferral, stale owners, bounded timers, inaccessible objects, unavailable cooldown data, Settings wiring, release safety, and exact ZIP contents. Every core regression runs in a fresh Lua process.
 
 This is not a substitute for a named Retail-client test. Texture resolution, actual rendering, taint, forbidden-action behavior, login/reload, combat, and PRD lifecycle remain `NOT-RUN`; see `todo.md` and issues #1–#2.
 

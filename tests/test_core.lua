@@ -450,6 +450,29 @@ local regressions = {
         assertEqual(textureCount, before, "reused PRD allocated duplicate overlays")
         assertEqual(replacementPRD.Runes[1].overlay.shown, true, "reused PRD did not regain styling")
     end },
+    { "overlay_cache", function()
+        local weakFrame = setmetatable({}, { __mode = "v" })
+        do
+            local firstTransient = NewRuneFrame()
+            weakFrame[1] = firstTransient
+            PersonalResourceDisplayFrame.classFrame = firstTransient
+            PersonalResourceDisplayFrame:SetupClassBar()
+            FlushTimers()
+
+            for _ = 1, 4 do
+                local nextFrame = NewRuneFrame()
+                PersonalResourceDisplayFrame.classFrame = nextFrame
+                PersonalResourceDisplayFrame:SetupClassBar()
+                FlushTimers()
+            end
+        end
+
+        collectgarbage("collect")
+        collectgarbage("collect")
+        assertEqual(weakFrame[1], nil, "bounded overlay cache retained an evicted PRD frame")
+        assertEqual(PersonalResourceDisplayFrame.classFrame.Runes[1].overlay.shown, true,
+            "current PRD lost its overlay while retiring old owners")
+    end },
     { "empty", function()
         local owner = PersonalResourceDisplayFrame.classFrame
         local runes = owner.Runes

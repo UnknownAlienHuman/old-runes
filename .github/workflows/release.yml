@@ -51,6 +51,7 @@ jobs:
           regressions=(
             release
             reuse
+            overlay_cache
             empty
             combat
             timers
@@ -168,6 +169,7 @@ jobs:
               r"API\.isDeathKnight",
               r"command\s*==\s*[\"']multicolor[\"']",
               r"command\s*==\s*[\"']reverse[\"']",
+              r"local\s+runeOverlays\s*=\s*setmetatable",
           )
           for pattern in forbidden:
               if re.search(pattern, core):
@@ -181,7 +183,9 @@ jobs:
               'db.reverseRecoveryOrder = nil',
               'ForgetRuneFrame(currentPRDClassFrame)',
               'local timerIndex = i',
-              'local runeOverlays = setmetatable({}, { __mode = "k" })',
+              'local runeOverlays = {}',
+              'local MAX_RETIRED_RUNE_OVERLAYS = 12',
+              'RetireRuneOverlay(rune)',
               'if type(ready) == "boolean" then',
               'if type(ready) ~= "boolean" then',
           )
@@ -193,9 +197,10 @@ jobs:
               raise SystemExit("irrelevant non-DK runtime scenario returned")
 
           required_regressions = (
-              '"release"', '"reuse"', '"empty"', '"combat"', '"timers"',
-              '"stale_prd"', '"inaccessible"', '"brightness"',
-              '"combat_mixed"', '"database"', '"cooldown_unavailable"',
+              '"release"', '"reuse"', '"overlay_cache"', '"empty"',
+              '"combat"', '"timers"', '"stale_prd"', '"inaccessible"',
+              '"brightness"', '"combat_mixed"', '"database"',
+              '"cooldown_unavailable"',
           )
           for name in required_regressions:
               if name not in tests:

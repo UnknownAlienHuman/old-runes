@@ -30,9 +30,21 @@ The runtime owns exactly one current player frame and one current PRD class fram
 
 ## Overlay and cache ownership
 
-Each live rune owns at most one addon-created overlay. `runeOverlays` is a weak-key map with a strong value for the lifetime of its live rune; a GC cycle cannot discard the only addon lookup and cause another texture to be allocated. When the rune key becomes unreachable, the bookkeeping entry can be collected.
+Lua 5.1 weak-key tables are not ephemerons. A texture can reference its parent rune, so a weak-key/strong-value registry can retain the very key it is expected to release. Weak values solve retention but can lose the only addon lookup while the native texture still exists, allowing duplicate textures.
 
-Presentation caches are separate weak-key maps. No frame, rune, cooldown, texture, hook, or timer is persisted.
+Old Runes therefore uses explicit bounded ownership:
+
+```text
+active rune -> one strong overlay lookup
+released rune -> tokenized retirement queue
+retired queue -> maximum 12 rune overlays
+reclaimed rune -> retirement token cleared, existing overlay reused
+expired retired rune -> overlay lookup removed
+```
+
+Twelve entries cover one complete player plus PRD rune set. The queue is not persisted, cannot grow without bound, and does not mutate Blizzard rune fields.
+
+Presentation caches remain weak-key maps only where their values do not reference the key. No frame, rune, cooldown, texture, hook, or timer is persisted.
 
 ## Hooks and refresh lifecycle
 
@@ -75,11 +87,11 @@ runeStyle
 ## Performance
 
 - At most two candidate frames are inspected per refresh.
-- One overlay is created lazily per rune and reused across detach/reattach.
+- One overlay is created lazily per rune and reused while active or retained in the bounded retirement cache.
 - Unchanged readiness does not rewrite vertex color.
 - Refresh timers are bounded, replaceable, generation-gated, and terminal.
 - No addon `OnUpdate`, ticker, frame-tree scan, or unbounded retry loop exists.
 
 ## Release boundary
 
-Validation runs for pull requests and `main`. GitHub release publication is manual and is rejected unless the workflow was dispatched from `refs/heads/main`. The publish job rebuilds the same minimal archive and verifies its SHA-256 before creating or updating a tag-bound release.
+Validation runs for pull requests and `main`. GitHub release publication is manual and is rejected unless the workflow was dispatched from `refs/heads/main`. An existing tag is resolved to its commit before either release branch and must equal `GITHUB_SHA`. The publish job rebuilds the same minimal archive and verifies its SHA-256 before creating or updating the release.

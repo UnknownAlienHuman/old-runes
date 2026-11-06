@@ -22,13 +22,13 @@ Read `wow-addon-engineering-kb/AGENTS.md` and `INDEX_MINI.md`, then the current 
 - Never create overlay regions or change Blizzard rune-art visibility in combat.
 - Keep discovery limited to `RuneFrame` and `PersonalResourceDisplayFrame.classFrame` unless selected source proves a new path.
 - Keep exactly one current player owner and one current PRD class-frame owner; release replacements instead of accumulating them.
-- Keep one stable overlay lookup per live rune; do not use a weak value that can disappear while its rune remains live.
+- Do not use a Lua 5.1 weak-key/strong-value table for overlays whose texture can reference its parent rune. Keep active overlays explicit and bound released overlay reuse to 12 runes.
 - Treat `GetRuneCooldown` as `MayReturnNothing`; unknown readiness preserves the current visual state.
 - Disabling PRD styling or releasing an accessible rune restores Blizzard art and cooldown defaults.
 - Cancel old readiness timers before replacement and clear each completed handle by its captured slot.
 - Do not reintroduce reverse layout, compatibility slash-command branches, non-DK runtime scenarios, or dead localization strings.
-- Do not persist frames, regions, timers, hooks, or presentation caches.
-- Release publication is manual and only from `refs/heads/main`.
+- Do not persist frames, regions, timers, hooks, presentation caches, or retired overlay entries.
+- Release publication is manual and only from `refs/heads/main`; an existing version tag must resolve to the exact release commit before a release is created or updated.
 
 ## Local checks
 
@@ -36,8 +36,8 @@ Read `wow-addon-engineering-kb/AGENTS.md` and `INDEX_MINI.md`, then the current 
 luac5.1 -p Localization.lua Core.lua Options.lua tests/test_core.lua tests/test_options.lua
 
 for regression in \
-  release reuse empty combat timers stale_prd inaccessible brightness \
-  combat_mixed database cooldown_unavailable; do
+  release reuse overlay_cache empty combat timers stale_prd inaccessible \
+  brightness combat_mixed database cooldown_unavailable; do
   lua5.1 tests/test_core.lua "$regression"
 done
 
